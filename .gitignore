@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+*.egg
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kilocode
+.kilocode/
+.qodo/
+
+# Config with secrets (раскомментируй для прода)
+# config/settings.json
+
+# Logs
+*.log
+
+# Run scripts
+run.py
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/

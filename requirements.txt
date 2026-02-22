@@ -1,0 +1,26 @@
+# ApiPostgresConnector - REST API connector for PostgreSQL
+
+# Web Framework
+flask==3.1.1
+flask-cors==5.0.0
+
+# Database
+psycopg2-binary==2.9.10
+
+# GUI
+customtkinter==5.2.2
+
+# System tray
+pystray>=0.19.5
+Pillow>=12.0.0
+
+# Security
+cryptography>=45.0.0
+
+# Utilities
+python-dotenv==1.2.1
+gunicorn==23.0.0
+pyperclip>=1.8.0
+
+# Build
+pyinstaller==6.14.1
