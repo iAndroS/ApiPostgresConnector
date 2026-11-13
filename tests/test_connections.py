@@ -135,6 +135,35 @@ class TestConnectionRegistry:
         # Подключение создано (реальная БД может быть недоступна — это неважно)
         assert profile.is_db_created is True
 
+    def test_disabled_connection_is_not_connected(self):
+        """Отключённое подключение не подключается к БД в фоне."""
+        connection = make_connection("main")
+        connection["enabled"] = False
+        config = FakeConfig([connection], default_connection="main")
+        registry = ConnectionRegistry(config)
+        
+        profile = registry.get("main")
+        assert profile.enabled is False
+        
+        thread = registry.start_background_connect()
+        thread.join(timeout=5)
+        
+        assert profile.is_db_created is False
+
+    def test_reload_updates_enabled_flag(self):
+        """Включение подключения применяется при перезагрузке реестра."""
+        config = FakeConfig([make_connection("main")], default_connection="main")
+        registry = ConnectionRegistry(config)
+        
+        profile = registry.get("main")
+        assert profile.enabled is True
+        
+        config.connections[0]["enabled"] = False
+        registry.reload(config)
+        
+        assert registry.get("main").enabled is False
+        assert registry.get("main") is profile
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

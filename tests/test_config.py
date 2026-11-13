@@ -286,6 +286,57 @@ class TestConnectionsConfig:
         assert config.get_connection(config.default_connection)['api_keys'] == [key]
         
         assert config.ensure_api_key(config.default_connection) == key
+    
+    def test_set_api_key_keeps_single_key(self):
+        """У подключения один API-ключ: новый заменяет прежние."""
+        config = make_config()
+        name = config.default_connection
+        
+        config.set_api_key(name, 'first-key')
+        config.set_api_key(name, 'second-key')
+        
+        assert config.get_connection(name)['api_keys'] == ['second-key']
+    
+    def test_connection_enabled_flag(self):
+        """Подключение можно включать и выключать."""
+        config = make_config()
+        name = config.default_connection
+        
+        assert config.is_connection_enabled(name) is True
+        
+        config.set_connection_enabled(name, False)
+        assert config.is_connection_enabled(name) is False
+        assert config.get_connection(name)['enabled'] is False
+        
+        config.set_connection_enabled(name, True)
+        assert config.is_connection_enabled(name) is True
+        
+        with pytest.raises(ValueError):
+            config.set_connection_enabled('nope', True)
+    
+    def test_normalize_adds_enabled_field(self):
+        """Подключения без поля enabled считаются включёнными."""
+        config = make_config({
+            'connections': [{
+                'name': 'old',
+                'database': {'host': 'h', 'port': 5432, 'database': 'd', 'user': 'u', 'password': 'p'},
+                'api_keys': ['k']
+            }],
+            'default_connection': 'old'
+        })
+        
+        config._normalize_connections()
+        
+        assert config.get_connection('old')['enabled'] is True
+    
+    def test_add_connection_disabled(self):
+        """Подключение можно создать сразу выключенным."""
+        config = make_config()
+        
+        config.add_connection('crm', enabled=False)
+        
+        assert config.get_connection('crm')['enabled'] is False
+        assert config.is_connection_enabled('crm') is False
 
 
 if __name__ == '__main__':

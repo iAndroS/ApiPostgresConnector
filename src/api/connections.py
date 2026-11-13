@@ -35,10 +35,11 @@ class ConnectionProfile:
     """Именованное подключение: свои параметры БД и свои API-ключи."""
 
     def __init__(self, name: str, database_config: Optional[Dict[str, Any]] = None,
-                 api_keys: Optional[List[str]] = None):
+                 api_keys: Optional[List[str]] = None, enabled: bool = True):
         self.name = name
         self.database_config = dict(database_config or {})
         self.api_keys = list(api_keys or [])
+        self.enabled = bool(enabled)
         self._db: Optional[Database] = None
         self._lock = threading.Lock()
 
@@ -131,17 +132,19 @@ class ConnectionRegistry:
             
             db_config = connection.get("database", {}) or {}
             api_keys = list(connection.get("api_keys", []) or [])
+            enabled = bool(connection.get("enabled", True))
             
             old_profile = self._profiles.get(name)
             
             if old_profile and old_profile.signature() == db_signature(db_config):
                 old_profile.api_keys = api_keys
+                old_profile.enabled = enabled
                 new_profiles[name] = old_profile
             else:
                 if old_profile:
                     logger.info(f"Database parameters changed for connection '{name}', reconnecting")
                     old_profile.close_db(reason="settings changed")
-                new_profiles[name] = ConnectionProfile(name, db_config, api_keys)
+                new_profiles[name] = ConnectionProfile(name, db_config, api_keys, enabled)
         
         for name, profile in self._profiles.items():
             if name not in new_profiles:
@@ -205,6 +208,10 @@ class ConnectionRegistry:
                 profiles = list(self._profiles.values())
             
             for profile in profiles:
+                if not profile.enabled:
+                    logger.info(f"Skipping background connect for disabled connection '{profile.name}'")
+                    continue
+                
                 try:
                     profile.db
                 except Exception as e:

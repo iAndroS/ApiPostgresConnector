@@ -272,6 +272,26 @@ class TestApiRoutes:
         assert response.status_code == 404
         assert 'Unknown connection' in response.get_json()['error']
     
+    def test_disabled_connection_returns_403(self, client, registry):
+        """Отключённое подключение не обслуживается — 403."""
+        registry.get("other").enabled = False
+        
+        response = client.get(
+            '/api/v1/c/other/tables',
+            headers={'X-API-Key': 'key-other'}
+        )
+        
+        assert response.status_code == 403
+        assert 'disabled' in response.get_json()['error']
+    
+    def test_disabled_default_connection_returns_403(self, client, registry):
+        """Отключённое подключение по умолчанию — 403 даже для /health."""
+        registry.get_default().enabled = False
+        
+        response = client.get('/api/v1/health')
+        
+        assert response.status_code == 403
+    
     def test_default_connection_used_without_name(self, client):
         """Без имени подключения используется подключение по умолчанию."""
         response = client.get(

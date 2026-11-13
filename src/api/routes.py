@@ -248,6 +248,13 @@ def check_auth_and_connection():
     if profile is None:
         return jsonify({"error": f"Unknown connection: {name}"}), 404
     
+    # Отключённое подключение не обслуживается
+    if not profile.enabled:
+        return jsonify({
+            "error": f"Connection '{profile.name}' is disabled",
+            "connection": profile.name
+        }), 403
+    
     g.connection = profile
     g.connection_name = profile.name
     

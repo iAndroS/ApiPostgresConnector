@@ -171,7 +171,8 @@ class Config:
             {
                 "name": "По умолчанию",
                 "database": {"host": ..., "port": ..., "database": ..., "user": ..., "password": ...},
-                "api_keys": ["..."]
+                "api_keys": ["..."],
+                "enabled": true
             }
         ],
         "default_connection": "По умолчанию",
@@ -209,6 +210,7 @@ class Config:
             self._seed_config_file()
         
         self._migrate_legacy_schema()
+        self._normalize_connections()
         self._decrypt_passwords()
     
     def save(self):
@@ -318,6 +320,13 @@ class Config:
         self._config.pop("database", None)
         self._config.get("api", {}).pop("api_keys", None)
     
+    def _normalize_connections(self):
+        """Дополняет подключения недостающими полями (enabled, api_keys)."""
+        for connection in self._config.get("connections", []):
+            if "enabled" not in connection:
+                connection["enabled"] = True
+            connection.setdefault("api_keys", [])
+
     def _decrypt_passwords(self):
         """Расшифровывает пароли всех подключений."""
         for connection in self._config.get("connections", []):
@@ -338,7 +347,8 @@ class Config:
                         "user": "postgres",
                         "password": ""
                     },
-                    "api_keys": []
+                    "api_keys": [],
+                    "enabled": True
                 }
             ],
             "default_connection": DEFAULT_CONNECTION_NAME,
@@ -421,13 +431,15 @@ class Config:
         return [c.get("name") for c in self._config.get("connections", [])]
     
     def add_connection(self, name: str, database: Optional[dict] = None, 
-                       api_keys: Optional[List[str]] = None) -> Dict[str, Any]:
+                       api_keys: Optional[List[str]] = None,
+                       enabled: bool = True) -> Dict[str, Any]:
         """Добавляет новое подключение.
 
         Args:
             name: Имя подключения (должно быть уникальным)
             database: Параметры БД
             api_keys: Список API-ключей
+            enabled: Включено ли подключение (True) или отключено (False)
             
         Returns:
             Созданное подключение
@@ -450,7 +462,8 @@ class Config:
                 "user": "postgres",
                 "password": ""
             },
-            "api_keys": list(api_keys) if api_keys else []
+            "api_keys": list(api_keys) if api_keys else [],
+            "enabled": bool(enabled)
         }
         self._config.setdefault("connections", []).append(connection)
         
@@ -460,7 +473,8 @@ class Config:
         return connection
     
     def update_connection(self, name: str, database: Optional[dict] = None,
-                          api_keys: Optional[List[str]] = None):
+                          api_keys: Optional[List[str]] = None,
+                          enabled: Optional[bool] = None):
         """Обновляет параметры подключения."""
         connection = self.get_connection(name)
         if not connection:
@@ -470,6 +484,37 @@ class Config:
             connection.setdefault("database", {}).update(database)
         if api_keys is not None:
             connection["api_keys"] = list(api_keys)
+        if enabled is not None:
+            connection["enabled"] = bool(enabled)
+    
+    def set_connection_enabled(self, name: str, enabled: bool) -> bool:
+        """Включает или отключает подключение.
+
+        Args:
+            name: Имя подключения
+            enabled: True — включить, False — отключить
+
+        Returns:
+            bool: Итоговое состояние подключения
+
+        Raises:
+            ValueError: если подключение не найдено
+        """
+        connection = self.get_connection(name)
+        if not connection:
+            raise ValueError(f"Unknown connection '{name}'")
+        
+        connection["enabled"] = bool(enabled)
+        
+        return bool(enabled)
+    
+    def is_connection_enabled(self, name: str) -> bool:
+        """Проверяет, включено ли подключение (по умолчанию — включено)."""
+        connection = self.get_connection(name)
+        if not connection:
+            return False
+        
+        return bool(connection.get("enabled", True))
     
     def rename_connection(self, name: str, new_name: str):
         """Переименовывает подключение."""
@@ -539,6 +584,27 @@ class Config:
             return new_key
         
         return api_keys[0]
+    
+    def set_api_key(self, name: str, key: str) -> str:
+        """Задаёт единственный API-ключ подключения (старые ключи отбрасываются).
+
+        Args:
+            name: Имя подключения
+            key: Новый ключ
+
+        Returns:
+            Установленный ключ
+
+        Raises:
+            ValueError: если подключение не найдено
+        """
+        connection = self.get_connection(name)
+        if not connection:
+            raise ValueError(f"Unknown connection '{name}'")
+        
+        connection["api_keys"] = [key] if key else []
+        
+        return key
     
     def update_database(self, **kwargs):
         """Update database configuration of the default connection."""
