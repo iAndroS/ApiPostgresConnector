@@ -574,12 +574,17 @@ class Database:
             self._tables_cache = None
             self._tables_cache_at = 0.0
 
-    def close(self):
-        """Close database connection."""
+    def close(self, reason: str = ""):
+        """Close database connection.
+
+        Args:
+            reason: Причина закрытия (для лога)
+        """
         self._invalidate_tables_cache()
         if self.connection:
             try:
                 self.connection.close()
-                logger.info("Database connection closed")
+                suffix = f" ({reason})" if reason else ""
+                logger.info(f"Database connection closed{suffix}")
             except Exception as e:
                 logger.debug(f"Error while closing connection: {e}")

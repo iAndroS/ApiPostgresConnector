@@ -3,11 +3,10 @@ import logging
 import threading
 import webbrowser
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, List
 
 import tkinter as tk
 from tkinter import ttk
-from tkinter import simpledialog
 import customtkinter as ctk
 
 # Pyperclip for clipboard operations (with PyInstaller compatibility)
@@ -43,6 +42,7 @@ class MainWindow(ctk.CTk):
 
         self.api_server = api_server
         self._current_connection: Optional[str] = None
+        self.docs_cards: List[dict] = []
 
         # Configure window
         gui_config = config.gui
@@ -74,9 +74,8 @@ class MainWindow(ctk.CTk):
         # Bind minimize to tray event
         self.bind("<Unmap>", lambda e: self._minimize_to_tray())
         
-        # NOTE: CTkEntry 5.2.x supports Ctrl+V natively
-        # We add explicit key binding to ensure it works properly
-        self._setup_ctrlv_binding()
+        # NOTE: вставка из буфера обмена (Ctrl+V) включается отдельно
+        # для каждого текстового поля — см. _register_paste()
         
         # Перехват события закрытия окна (крестик)
         self.protocol("WM_DELETE_WINDOW", self._on_close_window)
@@ -233,27 +232,52 @@ class MainWindow(ctk.CTk):
         self.lbl_connection_status.grid(row=6, column=0, columnspan=3, padx=4, pady=4, sticky="w")
         
         # --- API-ключи выбранного подключения ---
-        ctk.CTkLabel(container, text="API-ключи подключения", anchor="w",
-                     font=ctk.CTkFont(size=13, weight="bold")).pack(fill="x", padx=4, pady=(6, 2))
+        self.lbl_keys_header = ctk.CTkLabel(container, text="API-ключи подключения", anchor="w",
+                                            font=ctk.CTkFont(size=13, weight="bold"))
+        self.lbl_keys_header.pack(fill="x", padx=4, pady=(6, 2))
         
-        self.keys_listbox = tk.Listbox(container, height=4, bg="#2b2b2b", fg="#ffffff",
+        # Основной ключ подключения — редактируемое поле
+        ctk.CTkLabel(container, text="Основной ключ:", anchor="w",
+                     text_color="gray").pack(fill="x", padx=4)
+        
+        key_row = ctk.CTkFrame(container, fg_color="transparent")
+        key_row.pack(fill="x", padx=4, pady=(2, 4))
+        
+        self.entry_api_key = ctk.CTkEntry(key_row, width=300, placeholder_text="ключ подключения")
+        self.entry_api_key.pack(side="left", padx=(0, 4))
+        
+        self.btn_copy_key = ctk.CTkButton(key_row, text="📋", width=42, command=self._copy_api_key)
+        self.btn_copy_key.pack(side="left", padx=2)
+        
+        self.btn_generate_key = ctk.CTkButton(key_row, text="🎲", width=42,
+                                              command=self._generate_api_key)
+        self.btn_generate_key.pack(side="left", padx=2)
+        
+        self.btn_save_key = ctk.CTkButton(key_row, text="💾", width=42, command=self._save_api_key)
+        self.btn_save_key.pack(side="left", padx=2)
+        
+        # Все ключи подключения
+        ctk.CTkLabel(container, text="Все ключи подключения (первый — основной):", anchor="w",
+                     text_color="gray").pack(fill="x", padx=4)
+        
+        list_row = ctk.CTkFrame(container, fg_color="transparent")
+        list_row.pack(fill="x", padx=4, pady=(2, 6))
+        
+        self.keys_listbox = tk.Listbox(list_row, height=4, bg="#2b2b2b", fg="#ffffff",
                                        selectbackground="#4a9eff", highlightthickness=0,
                                        relief="flat", activestyle="none")
-        self.keys_listbox.pack(fill="x", padx=4)
+        self.keys_listbox.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.keys_listbox.bind("<Double-Button-1>", lambda e: self._copy_selected_api_key())
         
-        keys_buttons = ctk.CTkFrame(container, fg_color="transparent")
-        keys_buttons.pack(fill="x", padx=4, pady=6)
+        list_buttons = ctk.CTkFrame(list_row, fg_color="transparent")
+        list_buttons.pack(side="left")
         
-        ctk.CTkButton(keys_buttons, text="Сгенерировать", width=110,
-                      command=self._generate_api_key).pack(side="left", padx=2)
-        ctk.CTkButton(keys_buttons, text="Добавить", width=85,
+        ctk.CTkButton(list_buttons, text="+", width=42,
                       command=self._add_api_key).pack(side="left", padx=2)
-        ctk.CTkButton(keys_buttons, text="Удалить", width=75,
+        ctk.CTkButton(list_buttons, text="📋", width=42,
+                      command=self._copy_selected_api_key).pack(side="left", padx=2)
+        ctk.CTkButton(list_buttons, text="🗑", width=42,
                       command=self._remove_api_key).pack(side="left", padx=2)
-        
-        self.btn_copy_key = ctk.CTkButton(keys_buttons, text="📋", width=40,
-                                          command=self._copy_api_key)
-        self.btn_copy_key.pack(side="left", padx=2)
         
         # Right-click paste menu for all entry fields
         self._setup_paste_functionality()
@@ -334,6 +358,13 @@ class MainWindow(ctk.CTk):
         for key in connection.get("api_keys", []):
             self.keys_listbox.insert("end", key)
         
+        # Основной ключ — в редактируемом поле
+        api_keys = connection.get("api_keys", [])
+        self.entry_api_key.delete(0, "end")
+        if api_keys:
+            self.entry_api_key.insert(0, api_keys[0])
+        
+        self.lbl_keys_header.configure(text=f"API-ключи подключения «{name}»")
         self.lbl_connection_status.configure(text=f"Подключение: {name}", text_color="gray")
     
     def _apply_editor_to_connection(self) -> bool:
@@ -366,7 +397,15 @@ class MainWindow(ctk.CTk):
             "password": self.entry_password.get()
         })
         
-        connection["api_keys"] = list(self.keys_listbox.get(0, "end"))
+        # Ключи: список — источник истины, но несохранённое значение поля
+        # основного ключа имеет приоритет
+        keys = list(self.keys_listbox.get(0, "end"))
+        field_key = self.entry_api_key.get().strip()
+        
+        if field_key and (not keys or keys[0] != field_key):
+            keys = [field_key] + [k for k in keys if k != field_key]
+        
+        connection["api_keys"] = keys
         
         return True
     
@@ -376,16 +415,10 @@ class MainWindow(ctk.CTk):
 
     def _add_connection(self):
         """Создаёт новое подключение."""
-        name = simpledialog.askstring(
-            "Новое подключение",
-            "Название подключения:",
-            parent=self
-        )
+        name = self._prompt_text("Новое подключение", "Название подключения:")
         
-        if not name or not name.strip():
+        if not name:
             return
-        
-        name = name.strip()
         
         try:
             config.add_connection(name)
@@ -412,29 +445,24 @@ class MainWindow(ctk.CTk):
             self.lbl_connection_status.configure(text="⚠️ Не выбрано подключение", text_color="orange")
             return
         
-        new_name = simpledialog.askstring(
-            "Переименование",
-            "Новое название:",
-            initialvalue=name,
-            parent=self
-        )
+        new_name = self._prompt_text("Переименование", "Новое название:", initial_value=name)
         
-        if not new_name or not new_name.strip() or new_name.strip() == name:
+        if not new_name or new_name == name:
             return
         
         try:
-            config.rename_connection(name, new_name.strip())
+            config.rename_connection(name, new_name)
         except ValueError as e:
             self.lbl_connection_status.configure(text=f"⚠️ {e}", text_color="orange")
             return
         
-        self._current_connection = new_name.strip()
+        self._current_connection = new_name
         config.save()
         self._refresh_connections_tree()
-        self._load_connection_into_editor(new_name.strip())
+        self._load_connection_into_editor(new_name)
         self._reload_runtime_config()
         self.lbl_connection_status.configure(
-            text=f"✅ Подключение переименовано в '{new_name.strip()}'", text_color="green")
+            text=f"✅ Подключение переименовано в '{new_name}'", text_color="green")
     
     def _duplicate_connection(self):
         """Создаёт копию выбранного подключения."""
@@ -443,17 +471,11 @@ class MainWindow(ctk.CTk):
             self.lbl_connection_status.configure(text="⚠️ Не выбрано подключение", text_color="orange")
             return
         
-        new_name = simpledialog.askstring(
-            "Дублирование",
-            "Название копии:",
-            initialvalue=f"{name}-copy",
-            parent=self
-        )
+        new_name = self._prompt_text("Дублирование", "Название копии:", initial_value=f"{name}-copy")
         
-        if not new_name or not new_name.strip():
+        if not new_name:
             return
         
-        new_name = new_name.strip()
         source = config.get_connection(name)
         
         try:
@@ -517,13 +539,77 @@ class MainWindow(ctk.CTk):
         """Показывает диалог подтверждения."""
         from tkinter import messagebox
         return messagebox.askyesno("Подтверждение", message, parent=self)
+    
+    def _prompt_text(self, title: str, prompt: str, initial_value: str = "") -> Optional[str]:
+        """Модальный диалог ввода строки в стиле приложения.
+
+        Args:
+            title: Заголовок окна
+            prompt: Подпись над полем ввода
+            initial_value: Начальное значение поля
+
+        Returns:
+            Введённый текст (без пробелов по краям) или None, если ввод отменён
+        """
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(title)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        
+        width, height = 420, 160
+        
+        ctk.CTkLabel(dialog, text=prompt, anchor="w", justify="left").pack(
+            fill="x", padx=20, pady=(18, 6)
+        )
+        
+        entry = ctk.CTkEntry(dialog, width=380)
+        entry.pack(fill="x", padx=20)
+        
+        if initial_value:
+            entry.insert(0, initial_value)
+            entry.select_range(0, "end")
+        
+        result = {"value": None}
+        
+        def on_ok():
+            result["value"] = entry.get().strip()
+            dialog.destroy()
+        
+        def on_cancel():
+            result["value"] = None
+            dialog.destroy()
+        
+        entry.bind("<Return>", lambda e: on_ok())
+        entry.bind("<Escape>", lambda e: on_cancel())
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+        
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.pack(fill="x", padx=20, pady=14)
+        ctk.CTkButton(buttons, text="ОК", width=100, command=on_ok).pack(side="right", padx=4)
+        ctk.CTkButton(buttons, text="Отмена", width=100, command=on_cancel).pack(side="right", padx=4)
+        
+        # Вставка из буфера обмена работает и в диалоге
+        self._register_paste(entry)
+        
+        # Центрируем окно диалога над основным
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - width) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - height) // 2
+        dialog.geometry(f"{width}x{height}+{max(x, 0)}+{max(y, 0)}")
+        
+        dialog.grab_set()
+        entry.focus_set()
+        
+        self.wait_window(dialog)
+        
+        return result["value"]
 
     # ------------------------------------------------------------------
     # API-ключи
     # ------------------------------------------------------------------
 
     def _generate_api_key(self):
-        """Generate new API key for the selected connection."""
+        """Генерирует новый ключ для выбранного подключения."""
         import secrets
         
         name = self._current_connection
@@ -532,61 +618,155 @@ class MainWindow(ctk.CTk):
             return
         
         new_key = secrets.token_urlsafe(32)
-        self.keys_listbox.insert("end", new_key)
-        self._apply_editor_to_connection()
-        self._save_and_apply()
+        
+        # Новый ключ становится основным и сразу применяется
+        self.entry_api_key.delete(0, "end")
+        self.entry_api_key.insert(0, new_key)
+        self._save_api_key()
+        
         logger.info(f"New API key generated for connection '{name}'")
     
-    def _add_api_key(self):
-        """Adds a manually entered API key to the selected connection."""
+    def _save_api_key(self):
+        """Сохраняет основной ключ подключения из поля ввода."""
         name = self._current_connection
         if not name:
             self.lbl_connection_status.configure(text="⚠️ Не выбрано подключение", text_color="orange")
             return
         
-        new_key = simpledialog.askstring(
-            "Новый API-ключ",
-            "Введите ключ:",
-            parent=self
-        )
+        new_key = self.entry_api_key.get().strip()
         
-        if not new_key or not new_key.strip():
+        if not new_key:
+            self.lbl_connection_status.configure(text="⚠️ Ключ не может быть пустым", text_color="orange")
             return
         
-        self.keys_listbox.insert("end", new_key.strip())
-        self._apply_editor_to_connection()
+        connection = config.get_connection(name)
+        if not connection:
+            return
+        
+        other_keys = [k for k in connection.get("api_keys", []) if k != new_key]
+        connection["api_keys"] = [new_key] + other_keys
+        
+        self._refresh_keys_widgets(name)
         self._save_and_apply()
+        
+        self.lbl_connection_status.configure(
+            text=f"✅ Основной ключ подключения '{name}' сохранён", text_color="green")
+    
+    def _add_api_key(self):
+        """Добавляет дополнительный ключ к выбранному подключению."""
+        name = self._current_connection
+        if not name:
+            self.lbl_connection_status.configure(text="⚠️ Не выбрано подключение", text_color="orange")
+            return
+        
+        new_key = self._prompt_text("Новый API-ключ", "Введите ключ:")
+        
+        if not new_key:
+            return
+        
+        connection = config.get_connection(name)
+        if not connection:
+            return
+        
+        api_keys = connection.get("api_keys", [])
+        if new_key in api_keys:
+            self.lbl_connection_status.configure(text="⚠️ Такой ключ уже есть", text_color="orange")
+            return
+        
+        api_keys.append(new_key)
+        connection["api_keys"] = api_keys
+        
+        self._refresh_keys_widgets(name)
+        self._save_and_apply()
+        
+        self.lbl_connection_status.configure(
+            text=f"✅ Ключ добавлен в подключение '{name}'", text_color="green")
     
     def _remove_api_key(self):
-        """Removes the selected API key from the list."""
-        selection = self.keys_listbox.curselection()
-        if not selection:
+        """Удаляет выбранный ключ из подключения."""
+        name = self._current_connection
+        if not name:
+            self.lbl_connection_status.configure(text="⚠️ Не выбрано подключение", text_color="orange")
             return
         
-        self.keys_listbox.delete(selection[0])
-        self._apply_editor_to_connection()
+        selection = self.keys_listbox.curselection()
+        if not selection:
+            self.lbl_connection_status.configure(text="⚠️ Не выбран ключ в списке", text_color="orange")
+            return
+        
+        connection = config.get_connection(name)
+        if not connection:
+            return
+        
+        api_keys = list(connection.get("api_keys", []))
+        
+        if len(api_keys) <= 1:
+            self.lbl_connection_status.configure(
+                text="⚠️ Последний ключ удалить нельзя — смените его в поле выше", text_color="orange")
+            return
+        
+        removed = api_keys[selection[0]]
+        api_keys.pop(selection[0])
+        connection["api_keys"] = api_keys
+        
+        self._refresh_keys_widgets(name)
         self._save_and_apply()
+        
+        self.lbl_connection_status.configure(
+            text=f"🗑 Ключ удалён из подключения '{name}'", text_color="gray")
+    
+    def _refresh_keys_widgets(self, name: str):
+        """Обновляет поле основного ключа и список ключей по конфигу."""
+        connection = config.get_connection(name)
+        if not connection:
+            return
+        
+        api_keys = connection.get("api_keys", [])
+        
+        self.entry_api_key.delete(0, "end")
+        if api_keys:
+            self.entry_api_key.insert(0, api_keys[0])
+        
+        self.keys_listbox.delete(0, "end")
+        for key in api_keys:
+            self.keys_listbox.insert("end", key)
     
     def _copy_api_key(self):
-        """Copy API key to clipboard."""
+        """Копирует основной ключ подключения в буфер обмена."""
+        if not pyperclip:
+            return
+        
+        api_key = self.entry_api_key.get().strip()
+        
+        if not api_key:
+            self.lbl_connection_status.configure(text="⚠️ Ключ подключения не задан", text_color="orange")
+            return
+        
+        self._copy_to_clipboard(api_key, self.btn_copy_key, "📋")
+    
+    def _copy_selected_api_key(self):
+        """Копирует выбранный в списке ключ в буфер обмена."""
         if not pyperclip:
             return
         
         selection = self.keys_listbox.curselection()
         
-        if selection:
-            api_key = self.keys_listbox.get(selection[0])
-        else:
-            api_key = self.keys_listbox.get(0, "end").split("\n")[0]
+        if not selection:
+            self.lbl_connection_status.configure(text="⚠️ Не выбран ключ в списке", text_color="orange")
+            return
         
-        if not api_key:
+        api_key = self.keys_listbox.get(selection[0])
+        self._copy_to_clipboard(api_key, self.btn_copy_key, "📋")
+    
+    def _copy_to_clipboard(self, text: str, button, original_text: str):
+        """Копирует текст в буфер обмена и показывает подтверждение."""
+        if not pyperclip:
             return
         
         try:
-            pyperclip.copy(api_key)
-            original_text = self.btn_copy_key.cget("text")
-            self.btn_copy_key.configure(text="✅", text_color="green")
-            self.after(1500, lambda: self.btn_copy_key.configure(text="📋", text_color="white"))
+            pyperclip.copy(text)
+            button.configure(text="✅", text_color="green")
+            self.after(1500, lambda: button.configure(text=original_text, text_color="white"))
             logger.info("API key copied to clipboard")
         except Exception as e:
             logger.error(f"Failed to copy API key: {e}")
@@ -643,46 +823,115 @@ class MainWindow(ctk.CTk):
         # Bind right-click menu for API entry fields (Ctrl+V is native in CTkEntry)
         self.entry_api_host.bind("<Button-3>", lambda e: self._show_paste_menu(e, self.entry_api_host))
         self.entry_api_port.bind("<Button-3>", lambda e: self._show_paste_menu(e, self.entry_api_port))
+        
+        # Ctrl+V — привязка к внутреннему tk.Entry каждого поля
+        self._register_paste(self.entry_api_host, self.entry_api_port)
 
     def _create_api_docs_tab(self):
         """Create API documentation tab."""
-        scroll_frame = ctk.CTkScrollableFrame(self.tab_api_docs, width=640, height=480)
-        scroll_frame.pack(padx=10, pady=10, fill="both", expand=True)
-
-        # Function to copy URL to clipboard
-        def copy_to_clipboard(text, button):
+        # Переключатель подключений
+        top_frame = ctk.CTkFrame(self.tab_api_docs, fg_color="transparent")
+        top_frame.pack(fill="x", padx=12, pady=(12, 0))
+        
+        ctk.CTkLabel(top_frame, text="Подключение:").pack(side="left", padx=(0, 8))
+        
+        self.docs_connection_var = ctk.StringVar(value=config.default_connection)
+        self.docs_connection_menu = ctk.CTkOptionMenu(
+            top_frame,
+            values=self._docs_connection_values(),
+            variable=self.docs_connection_var,
+            command=self._on_docs_connection_change,
+            width=240
+        )
+        self.docs_connection_menu.pack(side="left")
+        
+        ctk.CTkLabel(
+            top_frame,
+            text="ссылки и curl-команды — для выбранного подключения",
+            text_color="gray"
+        ).pack(side="left", padx=12)
+        
+        self.docs_scroll_frame = ctk.CTkScrollableFrame(self.tab_api_docs, width=640, height=440)
+        self.docs_scroll_frame.pack(padx=10, pady=10, fill="both", expand=True)
+        
+        self._refresh_api_docs()
+    
+    def _docs_connection_values(self) -> List[str]:
+        """Список подключений для переключателя в документации."""
+        names = config.get_connection_names()
+        return names if names else [config.default_connection]
+    
+    def _on_docs_connection_change(self, choice: str):
+        """Переключение подключения в документации — обновляем ссылки."""
+        self._refresh_api_docs()
+    
+    def _update_docs_connections(self):
+        """Обновляет список подключений в переключателе документации."""
+        if not hasattr(self, "docs_connection_menu"):
+            return
+        
+        values = self._docs_connection_values()
+        self.docs_connection_menu.configure(values=values)
+        
+        if self.docs_connection_var.get() not in values:
+            self.docs_connection_var.set(config.default_connection)
+    
+    def _refresh_api_docs(self):
+        """Перестраивает карточки эндпоинтов (актуальные хост, порт, ключ и подключение)."""
+        if not hasattr(self, "docs_scroll_frame"):
+            return
+        
+        self._update_docs_connections()
+        
+        self.docs_cards = []
+        
+        for child in self.docs_scroll_frame.winfo_children():
+            child.destroy()
+        
+        # Function to copy text to clipboard
+        def copy_to_clipboard(text, button, original_text):
             """Copy text to clipboard."""
-            if pyperclip:
-                try:
-                    pyperclip.copy(text)
-                    button.configure(text="✅ Скопировано!", text_color="green")
-                    self.after(2000, lambda: button.configure(text="📋", text_color="white"))
-                except Exception:
-                    button.configure(text="❌ Ошибка", text_color="red")
-
+            if not pyperclip:
+                return
+            
+            try:
+                pyperclip.copy(text)
+                button.configure(text="✅", text_color="green")
+                self.after(2000, lambda: button.configure(text=original_text, text_color="white"))
+            except Exception:
+                button.configure(text="❌", text_color="red")
+        
         # Function to open URL in browser
         def open_in_browser(url, button):
             """Open URL in default browser."""
             try:
                 webbrowser.open(url)
-                button.configure(text="✅ Открыто!", text_color="green")
+                button.configure(text="✅", text_color="green")
                 self.after(2000, lambda: button.configure(text="🌐", text_color="white"))
             except Exception:
-                button.configure(text="❌ Ошибка", text_color="red")
-
+                button.configure(text="❌", text_color="red")
+        
         # Get base URL from config
         api_host = getattr(self, 'entry_api_host', None)
         api_port = getattr(self, 'entry_api_port', None)
+        
         if api_host and api_port:
             base_url = f"http://{api_host.get()}:{api_port.get()}"
         else:
             base_url = "http://127.0.0.1:5000"
         
-        # Ключ подключения по умолчанию — для готовых curl-команд
-        default_connection = config.get_connection(config.default_connection) or {}
-        api_keys = default_connection.get("api_keys", [])
+        # Выбранное подключение
+        selected = self.docs_connection_var.get()
+        selected_connection = config.get_connection(selected) or {}
+        api_keys = selected_connection.get("api_keys", [])
         api_key = api_keys[0] if api_keys else "<API-KEY>"
-        connection_name = config.default_connection
+        
+        # Для подключения по умолчанию работает короткая форма пути,
+        # для остальных — именованная (/c/<имя>/...)
+        if selected == config.default_connection:
+            path_prefix = ""
+        else:
+            path_prefix = f"/c/{selected}"
         
         # Endpoints list: (method, path, description, requires_auth)
         endpoints = [
@@ -696,7 +945,7 @@ class MainWindow(ctk.CTk):
             ("POST", "/api/v1/query", "Выполнить произвольный SQL запрос (SELECT)", True),
             ("GET", "/api/v1/c/{connection}/tables", "То же, но для именованного подключения", True),
         ]
-
+        
         # Method colors
         method_colors = {
             "GET": "#4CAF50",
@@ -704,12 +953,11 @@ class MainWindow(ctk.CTk):
             "PUT": "#FF9800",
             "DELETE": "#F44336"
         }
-
+        
         for method, path, desc, requires_auth in endpoints:
-            # Endpoint frame
-            endpoint_frame = ctk.CTkFrame(scroll_frame)
+            endpoint_frame = ctk.CTkFrame(self.docs_scroll_frame)
             endpoint_frame.pack(fill="x", padx=5, pady=5)
-
+            
             # Method and path
             method_color = method_colors.get(method, "#FFFFFF")
             ctk.CTkLabel(
@@ -717,8 +965,8 @@ class MainWindow(ctk.CTk):
                 text=f"{method} {path}",
                 font=ctk.CTkFont(size=12, weight="bold"),
                 text_color=method_color
-            ).pack(anchor="w", padx=10, pady=(10, 5))
-
+            ).pack(anchor="w", padx=10, pady=(10, 4))
+            
             # Description
             ctk.CTkLabel(
                 endpoint_frame,
@@ -726,171 +974,180 @@ class MainWindow(ctk.CTk):
                 text_color="gray",
                 font=ctk.CTkFont(size=10)
             ).pack(anchor="w", padx=10)
-
-            # URL and buttons frame - horizontal layout
-            url_buttons_frame = ctk.CTkFrame(endpoint_frame, fg_color="transparent")
-            url_buttons_frame.pack(fill="x", padx=5, pady=5)
-
-            # URL label
-            url = f"{base_url}{path.replace('{name}', 'users').replace('{connection}', connection_name)}"
+            
+            # Ссылка — отдельной строкой, чтобы длинный URL не выдавливал кнопки
+            if path.startswith("/api/v1/c/"):
+                # Именованная форма — всегда с выбранным подключением
+                url = f"{base_url}{path.replace('{connection}', selected)}"
+            else:
+                url = f"{base_url}{path_prefix}{path.replace('{name}', 'users')}"
+            
             ctk.CTkLabel(
-                url_buttons_frame,
+                endpoint_frame,
                 text=url,
                 text_color="#64B5F6",
-                font=ctk.CTkFont(size=10)
-            ).pack(side="left", padx=5)
-
-            # Buttons frame
-            buttons_frame = ctk.CTkFrame(url_buttons_frame, fg_color="transparent")
-            buttons_frame.pack(side="right", padx=5)
-
-            # Copy button — для защищённых эндпоинтов копируем готовую curl-команду
-            copy_btn = ctk.CTkButton(
-                buttons_frame,
-                text="📋",
-                width=30
-            )
-            copy_btn.pack(side="left", padx=2)
+                font=ctk.CTkFont(size=10),
+                anchor="w"
+            ).pack(fill="x", padx=10, pady=(4, 0))
             
+            # Кнопки — своей строкой, всегда видны
+            buttons_frame = ctk.CTkFrame(endpoint_frame, fg_color="transparent")
+            buttons_frame.pack(fill="x", padx=8, pady=(4, 8))
+            
+            # Копировать саму ссылку
+            link_btn = ctk.CTkButton(buttons_frame, text="📋 Ссылка", width=100)
+            link_btn.pack(side="left", padx=2)
+            link_btn.configure(
+                command=lambda u=url, b=link_btn, t="📋 Ссылка": copy_to_clipboard(u, b, t)
+            )
+            
+            # Копировать готовую curl-команду
             if requires_auth:
                 curl = f'curl -H "X-API-Key: {api_key}" "{url}"'
             else:
                 curl = f'curl "{url}"'
             
-            # Fix closure with proper lambda
-            copy_btn.configure(command=lambda u=curl, b=copy_btn: copy_to_clipboard(u, b))
-
-            # Open in browser — только для эндпоинтов без авторизации
+            curl_btn = ctk.CTkButton(buttons_frame, text="cURL", width=70)
+            curl_btn.pack(side="left", padx=2)
+            curl_btn.configure(
+                command=lambda c=curl, b=curl_btn, t="cURL": copy_to_clipboard(c, b, t)
+            )
+            
+            # Открыть в браузере — только для эндпоинтов без авторизации
+            open_btn = None
             if not requires_auth:
-                open_btn = ctk.CTkButton(
-                    buttons_frame,
-                    text="🌐",
-                    width=30
-                )
+                open_btn = ctk.CTkButton(buttons_frame, text="🌐", width=40)
                 open_btn.pack(side="left", padx=2)
                 open_btn.configure(command=lambda u=url, b=open_btn: open_in_browser(u, b))
+            
+            # Структура карточки — используется в тестах и для отладки
+            self.docs_cards.append({
+                "method": method,
+                "path": path,
+                "description": desc,
+                "url": url,
+                "curl": curl,
+                "requires_auth": requires_auth,
+                "link_button": link_btn,
+                "curl_button": curl_btn,
+                "browser_button": open_btn,
+            })
 
     # ------------------------------------------------------------------
     # Вспомогательное: Ctrl+V и контекстное меню
     # ------------------------------------------------------------------
 
-    def _bind_ctrlv_to_entry(self, ctk_entry):
-        """Bind Ctrl+V to internal _entry of CTkEntry widget.
-        
-        CTkEntry wraps tk.Entry in _entry attribute.
-        We bind directly to _entry to handle paste properly.
-        """
-        if hasattr(ctk_entry, '_entry') and ctk_entry._entry:
-            ctk_entry._entry.bind("<Control-v>", self._on_ctrl_v)
-            ctk_entry._entry.bind("<Control-V>", self._on_ctrl_v)
-            logger.debug(f"Bound Ctrl+V to _entry of {ctk_entry}")
+    def _clipboard_text(self, entry=None) -> str:
+        """Достаёт текст из буфера обмена.
 
-    def _setup_ctrlv_binding(self):
-        """Setup Ctrl+V binding for all Entry widgets.
-        
-        Uses bind_all to catch Ctrl+V events globally and redirect them
-        to the focused widget with proper clipboard handling.
-        """
-        # Bind Ctrl+V globally to catch it for all Entry widgets
-        # Using focus_get() to get the focused widget
-        self.bind_all("<Control-v>", self._on_ctrl_v)
-        self.bind_all("<Control-V>", self._on_ctrl_v)
-        logger.debug("Ctrl+V global binding set up")
+        Args:
+            entry: Виджет с фокусом (запасной источник — системный буфер Tk)
 
-    def _on_ctrl_v(self, event):
-        """Handle Ctrl+V paste event.
-        
-        Gets clipboard content and inserts into focused widget.
-        Works with both tk.Entry and CTkEntry widgets.
+        Returns:
+            Текст из буфера или пустая строка
         """
-        # Check if event widget is a CTkEntry or tk.Entry
-        widget = event.widget
-        
-        if not pyperclip:
-            return None
-        
-        # Get clipboard text
-        try:
-            text = pyperclip.paste()
-            if not text:
-                return "break"
-        except Exception as e:
-            logger.debug(f"Failed to get clipboard: {e}")
-            return None
-        
-        # Find the entry widget to insert into
-        entry = None
-        
-        # Check if it's CTkEntry (has _entry attribute)
-        if hasattr(widget, '_entry') and widget._entry:
-            entry = widget._entry
-        # Check if it's a regular tk.Entry
-        elif hasattr(widget, 'insert') and hasattr(widget, 'delete'):
-            entry = widget
-        
-        if entry:
+        if pyperclip:
             try:
-                # Delete selected text if any
-                try:
-                    entry.delete("sel.first", "sel.last")
-                except tk.TclError:
-                    pass  # No selection
-                
-                # Insert at cursor position
-                try:
-                    cursor_pos = entry.index("insert")
-                except tk.TclError:
-                    cursor_pos = 0
-                
-                entry.insert(cursor_pos, text)
-                entry.icursor(cursor_pos + len(text))
-                
-                logger.debug(f"Ctrl+V paste successful: '{text[:20]}...'")
-                return "break"  # Prevent default handling
+                text = pyperclip.paste()
+                if text:
+                    return text
             except Exception as e:
-                logger.debug(f"Ctrl+V insert error: {e}")
+                logger.debug(f"Failed to get clipboard: {e}")
         
-        return None
+        if entry is not None:
+            try:
+                return entry.clipboard_get()
+            except tk.TclError:
+                pass
+        
+        return ""
+    
+    def _insert_text(self, entry, text: str) -> bool:
+        """Вставляет текст в позицию курсора (выделение заменяется).
 
+        Args:
+            entry: Внутренний виджет tk.Entry
+            text: Текст для вставки
+
+        Returns:
+            bool: True если текст вставлен
+        """
+        if not entry or not text:
+            return False
+        
+        try:
+            try:
+                entry.delete("sel.first", "sel.last")
+            except tk.TclError:
+                pass  # выделения нет
+            
+            try:
+                cursor_pos = entry.index("insert")
+            except tk.TclError:
+                cursor_pos = 0
+            
+            entry.insert(cursor_pos, text)
+            entry.icursor(cursor_pos + len(text))
+            logger.debug(f"Pasted {len(text)} chars at position {cursor_pos}")
+            return True
+        except tk.TclError as e:
+            logger.debug(f"Paste insert error: {e}")
+            return False
+    
+    def _on_paste(self, event):
+        """Обработчик Ctrl+V для текстовых полей.
+
+        Привязывается к внутреннему виджету tk.Entry (widget-level binding):
+        он срабатывает раньше class-привязки Tk, поэтому возврат "break"
+        отменяет штатную вставку — текст вставляется ровно один раз.
+        """
+        entry = event.widget
+        
+        if not isinstance(entry, (tk.Entry, tk.Text)):
+            inner = getattr(entry, "_entry", None)
+            if inner is None:
+                return None
+            entry = inner
+        
+        text = self._clipboard_text(entry)
+        
+        if not text:
+            return "break"
+        
+        self._insert_text(entry, text)
+        return "break"
+    
+    def _register_paste(self, *entries):
+        """Включает вставку из буфера обмена (Ctrl+V) для указанных полей.
+
+        Args:
+            *entries: Виджеты ввода (CTkEntry или tk.Entry)
+        """
+        for entry in entries:
+            if entry is None:
+                continue
+            
+            target = getattr(entry, "_entry", entry)
+            
+            try:
+                target.bind("<Control-v>", self._on_paste, add="+")
+                target.bind("<Control-V>", self._on_paste, add="+")
+            except tk.TclError as e:
+                logger.debug(f"Failed to bind paste for {entry}: {e}")
+    
     def _show_paste_menu(self, event, widget):
         """Show context menu with paste option."""
         menu = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="white")
         
         def paste_action():
-            if pyperclip:
-                try:
-                    text = pyperclip.paste()
-                    if text:
-                        # CTkEntry имеет внутренний виджет _entry (tk.Entry)
-                        entry = None
-                        
-                        # Если widget имеет атрибут _entry - это CTkEntry
-                        if hasattr(widget, '_entry'):
-                            entry = widget._entry
-                        # Обычный tk.Entry
-                        elif hasattr(widget, 'get') and hasattr(widget, 'icursor'):
-                            entry = widget
-                        
-                        if entry:
-                            try:
-                                cursor_pos = entry.index("insert")
-                            except tk.TclError:
-                                try:
-                                    cursor_pos = entry.icursor()
-                                except tk.TclError:
-                                    cursor_pos = len(entry.get())
-                            
-                            current_text = entry.get()
-                            new_text = current_text[:cursor_pos] + text + current_text[cursor_pos:]
-                            entry.delete(0, "end")
-                            entry.insert(0, new_text)
-                            entry.icursor(cursor_pos + len(text))
-                except Exception as e:
-                    logger.debug(f"Paste menu error: {e}")
+            target = getattr(widget, "_entry", widget)
+            text = self._clipboard_text(target)
+            if text:
+                self._insert_text(target, text)
         
         menu.add_command(label="Вставить", command=paste_action)
         menu.tk_popup(event.x_root, event.y_root)
-
+    
     def _setup_paste_functionality(self):
         """Setup paste functionality for entry fields (right-click menu only)."""
         # Bind right-click menu for all entry fields
@@ -901,6 +1158,9 @@ class MainWindow(ctk.CTk):
         for entry in db_entries:
             # CTkEntry has native Ctrl+V support, just bind right-click menu
             entry.bind("<Button-3>", lambda e, w=entry: self._show_paste_menu(e, w))
+        
+        # Ctrl+V — привязка к внутреннему tk.Entry каждого поля
+        self._register_paste(*db_entries)
 
     def _parse_dsn(self):
         """Parse DSN string and fill connection fields."""
@@ -1040,6 +1300,7 @@ class MainWindow(ctk.CTk):
             logger.info("Runtime configuration reloaded")
         
         self._refresh_connections_tree()
+        self._refresh_api_docs()
     
     def _test_connection(self):
         """Test database connection for the selected connection."""
@@ -1083,7 +1344,7 @@ class MainWindow(ctk.CTk):
             })
             
             is_connected = db.is_connected()
-            db.close()
+            db.close(reason="connection test")
             
             if is_connected:
                 self.lbl_connection_status.configure(

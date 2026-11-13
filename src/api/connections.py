@@ -73,11 +73,15 @@ class ConnectionProfile:
         """Сигнатура параметров БД (для сравнения при перезагрузке реестра)."""
         return db_signature(self.database_config)
 
-    def close_db(self):
-        """Закрывает подключение к БД."""
+    def close_db(self, reason: str = ""):
+        """Закрывает подключение к БД.
+
+        Args:
+            reason: Причина закрытия (для лога)
+        """
         with self._lock:
             if self._db is not None:
-                self._db.close()
+                self._db.close(reason=reason)
                 self._db = None
 
     def set_db(self, db: Database):
@@ -130,13 +134,13 @@ class ConnectionRegistry:
             else:
                 if old_profile:
                     logger.info(f"Database parameters changed for connection '{name}', reconnecting")
-                    old_profile.close_db()
+                    old_profile.close_db(reason="settings changed")
                 new_profiles[name] = ConnectionProfile(name, db_config, api_keys)
         
         for name, profile in self._profiles.items():
             if name not in new_profiles:
                 logger.info(f"Connection '{name}' removed, closing database connection")
-                profile.close_db()
+                profile.close_db(reason="connection removed")
         
         with self._lock:
             self._profiles = new_profiles
