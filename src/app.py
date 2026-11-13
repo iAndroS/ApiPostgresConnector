@@ -3,6 +3,7 @@ import logging
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Add paths for both development and pyinstaller
@@ -468,6 +469,32 @@ class APIServer:
         """Create and configure Flask application."""
         app = Flask(__name__)
         CORS(app, resources={r"/api/*": {"origins": LOCAL_ORIGINS}})
+
+        # Логирование запросов: до обработки и после (с кодом ответа и таймингом)
+        @app.before_request
+        def log_request_start():
+            from flask import g, request
+
+            g.request_started_at = time.monotonic()
+            length = request.content_length or 0
+            logger.info(
+                f"-> {request.method} {request.path}"
+                f"{(' (' + str(length) + ' B)') if length else ''}"
+                f" from {request.remote_addr}"
+            )
+
+        @app.after_request
+        def log_request_end(response):
+            from flask import g, request
+
+            started = getattr(g, "request_started_at", None)
+            duration = time.monotonic() - started if started else 0.0
+            size = response.calculate_content_length() or 0
+            logger.info(
+                f"<- {request.method} {request.path} {response.status_code} "
+                f"за {duration:.2f}s, {size} B"
+            )
+            return response
 
         # JSON-ответы вместо HTML для ошибок Flask
         @app.errorhandler(HTTPException)

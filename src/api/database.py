@@ -26,11 +26,19 @@ RECONNECT_COOLDOWN = 30.0
 APPLICATION_NAME = "ApiPostgresConnector"
 
 # Сколько запросов выполнять на одном соединении, потом обновлять его.
-# Некоторые серверы (за WAF/DDoS-защитой, fail2ban и т.п.) обрывают сессию,
-# если запросы идут слишком часто: 5-й запрос подряд приводит к обрыву и
-# 20-секундному ожиданию. Обновление соединения снимает проблему.
-# 0 — без ограничения (обычные серверы).
-MAX_QUERIES_PER_CONNECTION = int(os.environ.get("API_MAX_QUERIES_PER_CONNECTION", "3"))
+#
+# На некоторых серверах (в т.ч. за WAF/DDoS-защитой) соединение обрывается
+# после нескольких запросов: проверено на боевой БД — каждый 5-й запрос на одном
+# соединении падает с "server closed the connection unexpectedly" (~20 с ожидания),
+# а запрос на свежем соединении проходит всегда.
+#
+# 1 — обновлять соединение после каждого запроса (безопасно, но +0.2 с на запрос).
+# 0 — не обновлять (обычные серверы без ограничений).
+MAX_QUERIES_PER_CONNECTION = int(os.environ.get("API_MAX_QUERIES_PER_CONNECTION", "1"))
+
+# Таймаут чтения ответа от сервера (секунды). Если сервер не прислал ответ
+# (обрыв канала), ждать бессмысленно — падаем быстро и повторяем запрос.
+SOCKET_TIMEOUT = int(os.environ.get("API_DB_SOCKET_TIMEOUT", "10"))
 
 # Человекочитаемые подсказки по типам ошибок
 DB_ERROR_HINTS: Dict[str, str] = {
@@ -308,6 +316,12 @@ class Database:
             # внутри явной транзакции «залипает» на ~20 с — сервер обрывает
             # сессию, клиент получает OperationalError вместо нормальной ошибки.
             self.connection.autocommit = True
+            
+            # Таймаут сокета: оборванный канал не должен держать запрос минутами
+            try:
+                self.connection.socket.settimeout(SOCKET_TIMEOUT)
+            except Exception as e:
+                logger.debug(f"Failed to set socket timeout: {e}")
             self._connect_failed = False
             self._clear_error()
             logger.info("Database connection established")
@@ -457,18 +471,24 @@ class Database:
     # Выполнение запросов
     # ------------------------------------------------------------------
 
-    def _run(self, query: str, params: Optional[tuple] = None) -> Optional[List[Dict]]:
+    def _run(self, query: str, params: Optional[tuple] = None,
+             retry: bool = True) -> Optional[List[Dict]]:
         """Выполняет запрос, при обрыве соединения переподключается и повторяет один раз.
 
         Args:
             query: SQL-запрос
             params: Параметры запроса
+            retry: Повторять ли запрос при обрыве соединения. Для INSERT/UPDATE/DELETE
+                повтор отключают: запрос мог выполниться на сервере, а ответ потерялся —
+                повтор задвоит данные.
 
         Returns:
             Список строк (пустой список, если запрос не возвращает результат)
             или None при ошибке
         """
-        for attempt in (1, 2):
+        attempts = (1, 2) if retry else (1,)
+        
+        for attempt in attempts:
             if self.connection is None:
                 if not self.should_retry_connect():
                     logger.warning("Skipping query: last connection attempt failed recently")
@@ -479,6 +499,8 @@ class Database:
             self._rotate_connection_if_needed()
             
             try:
+                query_started = time.monotonic()
+                
                 with self.connection.cursor() as cursor:
                     cursor.execute(query, params)
                     
@@ -489,13 +511,17 @@ class Database:
                     
                     self.connection.commit()
                     self._query_count += 1
+                    
+                    logger.info(
+                        f"SQL ok за {time.monotonic() - query_started:.2f}s: "
+                        f"{len(params) if params else 0} параметров, {len(result)} строк")
                     return result
             except psycopg2.OperationalError as e:
                 # Обрыв соединения — переподключаемся и пробуем ещё раз
                 error = describe_db_error(e)
                 self._record_error(error)
                 
-                if attempt == 2:
+                if attempt >= len(attempts):
                     logger.error(f"Database query failed [{error['kind']}]: {error['message']} "
                                  f"— {error['user_hint']}")
                     logger.debug(f"Query error details: {error}")
@@ -575,7 +601,9 @@ class Database:
         if params:
             logger.debug(f"Executing batch: {query[:200]}... with {len(params)} params")
         
-        return self._run(query, params)
+        # Повтор вставки после обрыва соединения опасен: запрос мог выполниться
+        # на сервере, а ответ потеряться — данные задвоятся
+        return self._run(query, params, retry=False)
 
     # ------------------------------------------------------------------
     # Структура БД

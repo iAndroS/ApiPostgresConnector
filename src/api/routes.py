@@ -1,6 +1,7 @@
 """API routes for ApiPostgresConnector."""
 import logging
 import re
+import time
 from functools import wraps
 
 from flask import Blueprint, g, jsonify, request
@@ -8,6 +9,9 @@ from flask import Blueprint, g, jsonify, request
 from .connections import ConnectionRegistry
 from .database import sanitize_db_message
 from ..version import APP_VERSION
+
+# Сколько записей вставлять одним запросом (ответ сервера не должен быть большим)
+BATCH_CHUNK_SIZE = 10
 
 logger = logging.getLogger(__name__)
 
@@ -614,9 +618,6 @@ def batch_insert_into_table(table_name, connection_name=None):
     placeholders = ", ".join(["%s"] * len(columns))
     column_names = ", ".join([f'"{col}"' for col in columns])
     
-    values_placeholder = ", ".join([f"({placeholders})"] * len(data))
-    query = f'INSERT INTO "{table_name}" ({column_names}) VALUES {values_placeholder} RETURNING *'
-    
     # Try to convert string numbers to actual numbers
     def convert_value(val):
         """Convert string numbers to int/float, leave other values as-is."""
@@ -638,34 +639,60 @@ def batch_insert_into_table(table_name, connection_name=None):
                 return False
         return val
 
-    # Flatten all values into a single tuple
-    all_values = []
-    for row in data:
-        row_values = []
-        for col in columns:
-            # Convert values - strings like "123" become numbers
-            row_values.append(convert_value(row.get(col)))
-        all_values.extend(row_values)
+    # Вставка порциями: большой ответ сервера (RETURNING *) не доходит до клиента
+    # на некоторых каналах — запрос зависает. Порциями ответ остаётся небольшим.
+    chunk_size = BATCH_CHUNK_SIZE
+    inserted_rows = []
+    started = time.monotonic()
     
-    # Execute as single query with transaction
-    try:
-        result = db.execute_batch(query, tuple(all_values))
-    except Exception as e:
-        logger.error(f"Batch insert error: {e}")
-        return jsonify({"error": f"Batch insert failed: {str(e)}"}), 500
+    logger.info(
+        f"batch-insert: table='{table_name}', rows={len(data)}, columns={len(columns)}, "
+        f"chunk={chunk_size}")
+    
+    for offset in range(0, len(data), chunk_size):
+        chunk = data[offset:offset + chunk_size]
+        
+        values_placeholder = ", ".join([f"({placeholders})"] * len(chunk))
+        query = f'INSERT INTO "{table_name}" ({column_names}) VALUES {values_placeholder} RETURNING *'
+        
+        chunk_values = []
+        for row in chunk:
+            for col in columns:
+                chunk_values.append(convert_value(row.get(col)))
+        
+        chunk_started = time.monotonic()
+        
+        try:
+            result = db.execute_batch(query, tuple(chunk_values))
+        except Exception as e:
+            logger.error(f"Batch insert error: {e}")
+            return jsonify({"error": f"Batch insert failed: {str(e)}"}), 500
+        
+        if result is None:
+            logger.error(
+                f"batch-insert failed at rows {offset}-{offset + len(chunk)}: "
+                f"{_error_payload(g.get('connection'))}")
+            return jsonify({
+                "error": f"Batch insert failed at rows {offset}-{offset + len(chunk)}",
+                "connection": g.get("connection_name"),
+                "inserted": len(inserted_rows),
+                "reason": _error_payload(g.get("connection"))
+            }), 500
+        
+        inserted_rows.extend(result)
+        
+        logger.info(
+            f"batch-insert chunk {offset}-{offset + len(chunk)}: "
+            f"{len(result)} строк за {time.monotonic() - chunk_started:.2f}s")
+    
+    elapsed = time.monotonic() - started
+    logger.info(f"batch-insert: вставлено {len(inserted_rows)} строк за {elapsed:.2f}s")
     
     _notify_activity()
-    
-    if result is None:
-        return jsonify({
-            "error": "Batch insert failed - check server logs for details",
-            "connection": g.get("connection_name"),
-            "reason": _error_payload(g.get("connection"))
-        }), 500
     
     return jsonify({
         "success": True,
         "connection": g.get("connection_name"),
-        "inserted": len(result),
-        "data": result
+        "inserted": len(inserted_rows),
+        "data": inserted_rows
     }), 201
