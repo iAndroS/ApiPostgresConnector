@@ -234,6 +234,71 @@ class TestConnectionEditor:
         assert config.get_connection("КлючиA")["database"]["host"] != "test-host"
 
 
+class TestConnectionActions:
+    """Действия с подключениями: добавить, дублировать, удалить."""
+
+    def test_add_connection_creates_connection(self, app, isolated_config, monkeypatch):
+        """«Добавить» создаёт подключение с ключом и открывает форму."""
+        from src.config import config
+
+        monkeypatch.setattr(app, "_prompt_text", lambda *a, **kw: "НовоеПодключение")
+
+        app._add_connection()
+
+        connection = config.get_connection("НовоеПодключение")
+
+        assert connection is not None
+        assert connection["api_keys"]
+        assert app._current_connection == "НовоеПодключение"
+        assert app._is_editor_visible() is True
+
+        config.remove_connection("НовоеПодключение")
+
+    def test_duplicate_connection_copies_params(self, app, two_connections, monkeypatch):
+        """«Дублировать» создаёт копию с теми же параметрами БД."""
+        from src.config import config
+
+        monkeypatch.setattr(app, "_prompt_text", lambda *a, **kw: "Копия")
+
+        app._current_connection = "КлючиA"
+        app._duplicate_connection()
+
+        copy = config.get_connection("Копия")
+        source = config.get_connection("КлючиA")
+
+        assert copy is not None
+        assert copy["database"] == source["database"]
+        assert copy["api_keys"] == source["api_keys"]
+
+        config.remove_connection("Копия")
+
+    def test_remove_connection(self, app, two_connections, monkeypatch):
+        """«Удалить» удаляет подключение после подтверждения."""
+        from src.config import config
+
+        monkeypatch.setattr(app, "_ask_confirmation", lambda *a, **kw: True)
+
+        app._current_connection = "КлючиB"
+        app._remove_connection()
+
+        assert config.get_connection("КлючиB") is None
+
+    def test_prompt_dialog_opens_and_closes(self, app):
+        """Модальный диалог ввода открывается и закрывается без ошибок."""
+        import customtkinter as ctk
+
+        app.update()
+
+        def close_dialog():
+            for widget in app.winfo_children():
+                if isinstance(widget, ctk.CTkToplevel):
+                    widget.destroy()
+
+        app.after(200, close_dialog)
+
+        assert app._prompt_text("Тест", "Введите текст:") is None
+
+
 class TestConnectionToggle:
     """Переключатель вкл/выкл подключения (иконка в строке)."""
 

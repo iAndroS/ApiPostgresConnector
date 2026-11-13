@@ -109,6 +109,56 @@ class TestTryPage:
             assert '/api/v1/c/main/tables' in body
             assert 'X-API-Key' in body
 
+    def test_try_page_has_editable_request(self):
+        """На странице есть поля для метода, пути и тела запроса."""
+        from src.app import APIServer
+
+        server = APIServer()
+        app = server._create_app("127.0.0.1", 5057)
+
+        with app.test_client() as test_client:
+            response = test_client.get('/try?path=%2Fapi%2Fv1%2Fc%2Fmain%2Fhealth')
+            body = response.get_data(as_text=True)
+
+            assert 'id="path"' in body
+            assert 'id="method"' in body
+            assert 'id="body"' in body
+            assert '/try/request' in body
+
+    def test_try_request_endpoint_executes_request(self):
+        """Прокси-эндпоинт выполняет запрос к API и возвращает результат."""
+        from src.app import APIServer
+
+        server = APIServer()
+        app = server._create_app("127.0.0.1", 5058)
+
+        with app.test_client() as test_client:
+            response = test_client.post('/try/request', json={
+                "path": "/api/v1/c/main/health",
+                "method": "GET",
+                "body": ""
+            })
+
+            assert response.status_code == 200
+            data = response.get_json()
+            assert "status" in data
+            assert "data" in data
+
+    def test_try_request_rejects_non_api_path(self):
+        """Прокси-эндпоинт принимает только пути /api/..."""
+        from src.app import APIServer
+
+        server = APIServer()
+        app = server._create_app("127.0.0.1", 5059)
+
+        with app.test_client() as test_client:
+            response = test_client.post('/try/request', json={
+                "path": "/etc/passwd",
+                "method": "GET"
+            })
+
+            assert response.status_code == 400
+
     def test_try_page_rejects_non_api_path(self):
         """Не-API путь заменяется на безопасный /health."""
         from src.app import APIServer

@@ -211,10 +211,6 @@ tables = requests.get(f"{BASE}/c/crm/tables", headers=HEADERS).json()</code></pr
 # Страница-«пробник»: выполняет GET-запрос к API прямо из браузера.
 # Заголовок X-API-Key подставляет сервер, поэтому ключ не попадает в URL.
 TRY_PAGE_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>ApiPostgresConnector — проверка запроса</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -225,13 +221,20 @@ TRY_PAGE_HTML = """
             color: #ffffff;
         }
         h1 { color: #4a9eff; font-size: 20px; }
-        .url {
+        .field { margin: 12px 0; }
+        .field label { display: block; margin-bottom: 4px; color: #b0b0b0; font-size: 13px; }
+        input[type="text"], select, textarea {
+            width: 100%;
+            box-sizing: border-box;
             background: #2d2d2d;
-            padding: 12px;
+            color: #ffffff;
+            border: 1px solid #444444;
             border-radius: 5px;
-            word-break: break-all;
-            margin: 12px 0;
+            padding: 8px 10px;
+            font-family: Consolas, monospace;
+            font-size: 13px;
         }
+        textarea { min-height: 120px; resize: vertical; }
         button {
             background: #4a9eff;
             color: white;
@@ -247,50 +250,116 @@ TRY_PAGE_HTML = """
             padding: 15px;
             border-radius: 5px;
             overflow-x: auto;
-            max-height: 60vh;
+            max-height: 55vh;
         }
         .status { margin: 10px 0; color: #7cb3ff; }
         .note { color: #ffb347; font-size: 13px; }
+        .row { display: flex; gap: 10px; align-items: flex-end; }
+        .row .field.method { width: 130px; flex: 0 0 130px; }
+        .row .field.path { flex: 1 1 auto; }
+        .examples a { color: #7cb3ff; margin-right: 12px; }
     </style>
 </head>
 <body>
     <h1>Проверка запроса к API</h1>
     
-    <div class="url"><code id="path">{{path}}</code></div>
+    <div class="row">
+        <div class="field method">
+            <label for="method">Метод</label>
+            <select id="method">
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+            </select>
+        </div>
+        <div class="field path">
+            <label for="path">Путь запроса (можно менять)</label>
+            <input type="text" id="path" value="{{ path }}" spellcheck="false">
+        </div>
+    </div>
     
-    <button id="send">Выполнить запрос</button>
-    <span class="status" id="status"></span>
+    <div class="field">
+        <label for="body">Тело запроса (JSON, для POST — например {"query": "SELECT 1"})</label>
+        <textarea id="body" spellcheck="false" placeholder='{"query": "SELECT * FROM table LIMIT 10"}'></textarea>
+    </div>
+    
+    <div class="examples">
+        <label>Быстрые примеры:</label><br>
+        <a href="#" data-path="/api/v1/c/{connection}/health">health</a>
+        <a href="#" data-path="/api/v1/c/{connection}/info">info</a>
+        <a href="#" data-path="/api/v1/c/{connection}/tables">tables</a>
+        <a href="#" data-path="/api/v1/c/{connection}/tables/users/select?limit=10">select</a>
+        <a href="#" data-path="/api/v1/c/{connection}/query">query (POST)</a>
+    </div>
+    
+    <p>
+        <button id="send">Выполнить запрос</button>
+        <span class="status" id="status"></span>
+    </p>
     
     <pre id="result">Нажмите «Выполнить запрос»</pre>
     
     <p class="note">
-        Запрос выполняется с сервера приложения: заголовок X-API-Key подставляется автоматически,
-        сам ключ в URL не попадает.
+        Запрос выполняется с сервера приложения: заголовок X-API-Key подставляется автоматически
+        по имени подключения из пути, сам ключ в URL не попадает.
     </p>
     
     <script>
-        const path = {{path}};
-        const key = {{api_key}};
+        const connection = {{ connection|tojson }};
         const button = document.getElementById('send');
         const status = document.getElementById('status');
         const result = document.getElementById('result');
+        const pathInput = document.getElementById('path');
+        const methodSelect = document.getElementById('method');
+        const bodyInput = document.getElementById('body');
+        
+        // Подставляем имя подключения в примеры
+        document.querySelectorAll('.examples a').forEach(link => {
+            link.addEventListener('click', event => {
+                event.preventDefault();
+                const target = link.getAttribute('data-path').replace('{connection}', connection);
+                pathInput.value = target;
+                methodSelect.value = target.endsWith('/query') ? 'POST' : 'GET';
+                if (methodSelect.value === 'POST') {
+                    bodyInput.value = JSON.stringify({query: 'SELECT 1'}, null, 2);
+                }
+            });
+        });
         
         button.addEventListener('click', async () => {
+            const path = pathInput.value.trim();
+            const method = methodSelect.value;
+            const body = bodyInput.value.trim();
+            
+            if (!path) {
+                status.textContent = 'Укажите путь запроса';
+                return;
+            }
+            
             button.disabled = true;
             status.textContent = 'Выполняется...';
             result.textContent = '';
             
             try {
-                const response = await fetch(path, {
-                    headers: key ? {'X-API-Key': key} : {}
+                const payload = {path: path, method: method, body: body};
+                const response = await fetch('/try/request', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
                 });
-                const text = await response.text();
-                let formatted = text;
-                try {
-                    formatted = JSON.stringify(JSON.parse(text), null, 2);
-                } catch (e) {}
-                status.textContent = 'HTTP ' + response.status + ' ' + response.statusText;
-                result.textContent = formatted;
+                const data = await response.json();
+                
+                if (data.error) {
+                    status.textContent = 'Ошибка: ' + data.error;
+                    result.textContent = '';
+                } else {
+                    status.textContent = 'HTTP ' + data.status;
+                    const content = data.data;
+                    result.textContent = (typeof content === 'string')
+                        ? content
+                        : JSON.stringify(content, null, 2);
+                }
             } catch (e) {
                 status.textContent = 'Ошибка запроса';
                 result.textContent = String(e);
@@ -313,6 +382,26 @@ def _default_api_path() -> str:
         return "/api/v1/health"
 
     return f"/api/v1/c/{quote(names[0])}/health"
+
+
+def _encode_path(path: str) -> str:
+    """Кодирует путь запроса для обращения по HTTP (пробелы, кириллица)."""
+    from urllib.parse import quote
+
+    return quote(path, safe="/?&=%:+,#~@!$'()*-._")
+
+
+def _connection_name_for_path(path: str) -> str:
+    """Возвращает имя подключения, указанное в пути."""
+    import re
+    from urllib.parse import unquote
+
+    match = re.match(r"^/api/v1/c/([^/]+)/", path)
+    if match:
+        return unquote(match.group(1))
+
+    names = config.get_connection_names()
+    return names[0] if names else ""
 
 
 def _api_key_for_path(path: str) -> str:
@@ -424,7 +513,7 @@ class APIServer:
         # подставляя заголовок X-API-Key на стороне сервера
         @app.route("/try")
         def try_endpoint():
-            """Выполняет API-запрос из браузера с ключом подключения."""
+            """Страница-«пробник»: форма для отправки запросов к API."""
             from flask import request
             from urllib.parse import unquote
 
@@ -433,10 +522,69 @@ class APIServer:
             if not path.startswith("/api/"):
                 path = _default_api_path()
             
-            api_key = _api_key_for_path(path)
-            
             return render_template_string(
-                TRY_PAGE_HTML, path=path, api_key=api_key, version=APP_VERSION)
+                TRY_PAGE_HTML, path=path, connection=_connection_name_for_path(path),
+                version=APP_VERSION)
+        
+        @app.route("/try/request", methods=["POST"])
+        def try_request():
+            """Выполняет запрос к API от имени сервера.
+            
+            Ключ подставляется по имени подключения из пути, поэтому в браузере
+            ключ не нужен — в том числе при отключённой аутентификации.
+            """
+            import json as json_module
+            import urllib.error
+            import urllib.request
+            
+            from flask import request
+            
+            data = request.get_json(silent=True) or {}
+            path = (data.get("path") or "").strip()
+            method = (data.get("method") or "GET").upper()
+            body = (data.get("body") or "").strip()
+            
+            if not path.startswith("/api/"):
+                return jsonify({"error": "Путь должен начинаться с /api/"}), 400
+            
+            host, port = "127.0.0.1", 5000
+            if self.server is not None:
+                address = self.server.server_address
+                host, port = address[0], address[1]
+            else:
+                host = config.api.get("host", host)
+                port = config.api.get("port", port)
+            
+            headers = {}
+            api_key = _api_key_for_path(path)
+            if api_key:
+                headers["X-API-Key"] = api_key
+            
+            payload = None
+            if body:
+                payload = body.encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            
+            request_obj = urllib.request.Request(
+                f"http://{host}:{port}{_encode_path(path)}", data=payload, headers=headers,
+                method=method)
+            
+            try:
+                with urllib.request.urlopen(request_obj, timeout=30) as response:
+                    text = response.read().decode("utf-8", errors="replace")
+                    status = response.status
+            except urllib.error.HTTPError as e:
+                text = e.read().decode("utf-8", errors="replace")
+                status = e.code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+            
+            try:
+                parsed = json_module.loads(text)
+            except Exception:
+                parsed = None
+            
+            return jsonify({"status": status, "data": parsed if parsed is not None else text})
         
         return app
 

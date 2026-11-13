@@ -356,8 +356,8 @@ class Config:
             },
             "gui": {
                 "theme": "dark-blue",
-                "width": 760,
-                "height": 780
+                "width": 740,
+                "height": 720
             },
             "app": {
                 "auto_start_api": True,

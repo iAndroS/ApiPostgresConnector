@@ -47,15 +47,19 @@ class MainWindow(ctk.CTk):
         self._editor_visible = False
         self.docs_cards: List[dict] = []
 
-        # Configure window
+        # Размер окна: сохраняемый пользовательский, иначе — по содержимому
         gui_config = config.gui
         self.title(VERSION_STRING)
         
-        # Минимальный размер — чтобы вкладка «Подключения» помещалась вместе с формой параметров
-        width = max(int(gui_config.get('width', 760) or 760), 760)
-        height = max(int(gui_config.get('height', 780) or 780), 780)
+        width = int(gui_config.get('width', 740) or 740)
+        height = int(gui_config.get('height', 720) or 720)
+        width = max(width, 640)
+        height = max(height, 560)
         self.geometry(f"{width}x{height}")
-        self.resizable(False, False)
+        self.minsize(640, 560)
+        self.resizable(True, True)
+        self._window_size = (width, height)
+        self._resize_save_job = None
 
         # Set theme
         theme = gui_config.get("theme", "dark-blue")
@@ -77,12 +81,46 @@ class MainWindow(ctk.CTk):
         # Bind minimize to tray event
         self.bind("<Unmap>", lambda e: self._minimize_to_tray())
         
+        # Запоминаем размер окна, если пользователь его изменил
+        self.bind("<Configure>", self._on_window_resize)
+        
         # NOTE: вставка из буфера обмена (Ctrl+V) включается отдельно
         # для каждого текстового поля — см. _register_paste()
         
         # Перехват события закрытия окна (крестик)
         self.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
+    def _on_window_resize(self, event):
+        """Сохраняет новый размер окна в конфиг (с задержкой, чтобы не писать при каждом движении)."""
+        if event.widget is not self:
+            return
+        
+        size = (self.winfo_width(), self.winfo_height())
+        
+        if size == getattr(self, "_window_size", None):
+            return
+        
+        self._window_size = size
+        
+        if self._resize_save_job:
+            self.after_cancel(self._resize_save_job)
+        
+        self._resize_save_job = self.after(800, self._save_window_size)
+    
+    def _save_window_size(self):
+        """Записывает размер окна в конфиг."""
+        self._resize_save_job = None
+        
+        size = getattr(self, "_window_size", None)
+        if not size:
+            return
+        
+        try:
+            config.update_gui(width=size[0], height=size[1])
+            config.save()
+        except OSError as e:
+            logger.warning(f"Failed to save window size: {e}")
+    
     def _create_header(self):
         """Create header section."""
         self.header_frame = ctk.CTkFrame(self, height=60)
@@ -107,7 +145,7 @@ class MainWindow(ctk.CTk):
 
     def _create_tabs(self):
         """Create tab view."""
-        self.tabview = ctk.CTkTabview(self, width=660, height=520)
+        self.tabview = ctk.CTkTabview(self, width=680, height=520)
         self.tabview.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
 
         # Connections tab (databases + API keys)
@@ -537,6 +575,75 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------
     # Управление подключениями
     # ------------------------------------------------------------------
+
+    def _ask_confirmation(self, message: str) -> bool:
+        """Показывает диалог подтверждения."""
+        from tkinter import messagebox
+        return messagebox.askyesno("Подтверждение", message, parent=self)
+    
+    def _prompt_text(self, title: str, prompt: str, initial_value: str = "") -> Optional[str]:
+        """Модальный диалог ввода строки в стиле приложения.
+
+        Args:
+            title: Заголовок окна
+            prompt: Подпись над полем ввода
+            initial_value: Начальное значение поля
+
+        Returns:
+            Введённый текст (без пробелов по краям) или None, если ввод отменён
+        """
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(title)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        
+        width, height = 420, 160
+        
+        ctk.CTkLabel(dialog, text=prompt, anchor="w", justify="left").pack(
+            fill="x", padx=20, pady=(18, 6)
+        )
+        
+        entry = ctk.CTkEntry(dialog, width=380)
+        entry.pack(fill="x", padx=20)
+        
+        if initial_value:
+            entry.insert(0, initial_value)
+            entry.select_range(0, "end")
+        
+        result = {"value": None}
+        
+        def on_ok():
+            result["value"] = entry.get().strip()
+            dialog.destroy()
+        
+        def on_cancel():
+            result["value"] = None
+            dialog.destroy()
+        
+        entry.bind("<Return>", lambda e: on_ok())
+        entry.bind("<Escape>", lambda e: on_cancel())
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+        
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.pack(fill="x", padx=20, pady=14)
+        ctk.CTkButton(buttons, text="ОК", width=100, command=on_ok).pack(side="right", padx=4)
+        ctk.CTkButton(buttons, text="Отмена", width=100, command=on_cancel).pack(side="right", padx=4)
+        
+        # Вставка из буфера обмена работает и в диалоге
+        self._register_paste(entry)
+        
+        # Центрируем окно диалога над основным
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - width) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - height) // 2
+        dialog.geometry(f"{width}x{height}+{max(x, 0)}+{max(y, 0)}")
+        
+        dialog.grab_set()
+        entry.focus_set()
+        
+        self.wait_window(dialog)
+        
+        return result["value"]
 
     def _add_connection(self):
         """Создаёт новое подключение и открывает форму параметров."""
@@ -1222,8 +1329,37 @@ class MainWindow(ctk.CTk):
         # Применяем изменения к работающему API (ключи и параметры БД — без перезапуска)
         self._reload_runtime_config()
         
+        # Перезапускаем API: без этого не применяются настройки уровня сервера
+        # (требование API-ключа, хост/порт, отладочный режим)
+        restarted = self._restart_api()
+        
         logger.info("Settings saved")
-        self.lbl_connection_status.configure(text="Настройки сохранены", text_color="green")
+        
+        if restarted:
+            self.lbl_connection_status.configure(text="Настройки сохранены, API перезапущен", text_color="green")
+        else:
+            self.lbl_connection_status.configure(text="Настройки сохранены", text_color="green")
+    
+    def _restart_api(self) -> bool:
+        """Перезапускает API-сервер (настройки уровня сервера применяются только после рестарта).
+
+        Returns:
+            bool: True если сервер был перезапущен
+        """
+        if not self.api_server or not self.api_server.is_running():
+            return False
+        
+        self.api_server.stop()
+        started = self.api_server.start()
+        
+        if started:
+            logger.info("API server restarted after settings change")
+        else:
+            logger.error("Failed to restart API server after settings change")
+            self.lbl_connection_status.configure(
+                text="Внимание: не удалось перезапустить API (порт занят?)", text_color="orange")
+        
+        return started
     
     def _save_and_apply(self):
         """Сохраняет конфиг и применяет его к работающему API."""

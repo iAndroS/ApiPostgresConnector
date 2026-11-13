@@ -20,8 +20,8 @@
   },
   "gui": {
     "theme": "dark-blue",
-    "width": 700,
-    "height": 700
+    "width": 740,
+    "height": 720
   },
   "app": {
     "auto_start_api": true,
