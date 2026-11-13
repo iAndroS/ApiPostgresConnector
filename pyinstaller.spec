@@ -14,8 +14,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('config', 'config'),
-        ('src', 'src'),
+        # Шаблон конфига (копируется в config/settings.json при первом запуске)
+        ('config/settings.default.json', 'config'),
     ],
     hiddenimports=[
         # Внешние библиотеки
@@ -28,6 +28,7 @@ a = Analysis(
         'pystray',
         'cryptography',
         'cryptography.fernet',
+        'pyperclip',
         # Внутренние модули проекта
         'src',
         'src.config',
@@ -54,7 +55,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='ApiPostgresConnector',
+    name='ApiPostgresConnector_v2',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -75,5 +76,6 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='ApiPostgresConnector',
+    name='ApiPostgresConnector_v2',
+    distpath=distpath,
 )

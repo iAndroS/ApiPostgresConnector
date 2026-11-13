@@ -1,36 +1,32 @@
 """ApiPostgresConnector - Main application entry point."""
 import logging
-import secrets
+import socket
 import sys
 import threading
 from pathlib import Path
-import os
 
 # Add paths for both development and pyinstaller
 _base_path = Path(__file__).parent
 sys.path.insert(0, str(_base_path))
 
-# For pyinstaller: add _internal to path to find config
+# For pyinstaller: add _MEIPASS to path to find config
 if getattr(sys, 'frozen', False):
     sys.path.insert(0, str(sys._MEIPASS))
 
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, jsonify, render_template_string
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
+from werkzeug.serving import make_server
 
-from src.config import config
-from src.api.database import Database
+from src.config import config, get_base_dir
+from src.api.connections import ConnectionRegistry
 from src.api.routes import api_bp, init_routes
 from src.gui.main_window import MainWindow
 
 
 # Configure logging
-# Determine log file path - use app directory
-if getattr(sys, 'frozen', False):
-    # Running as compiled exe
-    log_dir = Path(sys._MEIPASS).parent
-else:
-    # Running in development
-    log_dir = Path(__file__).parent.parent
+# Determine log file path - use app directory (next to EXE when frozen)
+log_dir = get_base_dir()
 
 log_file = log_dir / "app.log"
 
@@ -40,7 +36,10 @@ enable_logging = config.app.get("enable_logging", True)
 # Configure logging with optional file handler
 handlers = [logging.StreamHandler(sys.stdout)]
 if enable_logging:
-    handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
+    try:
+        handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
+    except OSError as e:
+        print(f"File logging disabled: {e}")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,26 +49,231 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info(f"Log file: {log_file} (file logging: {enable_logging})")
 
+# Origins allowed for browser requests (API работает на localhost)
+LOCAL_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*"]
+
+API_DOCS_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ApiPostgresConnector API</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #ffffff;
+        }
+        h1 { color: #4a9eff; }
+        h2 { color: #7cb3ff; margin-top: 30px; }
+        .endpoint {
+            background: #2d2d2d;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #4a9eff;
+        }
+        .method {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .get { background: #28a745; color: white; }
+        .post { background: #007bff; color: white; }
+        code {
+            background: #3d3d3d;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        pre {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .note { color: #ffb347; }
+        a { color: #4a9eff; }
+    </style>
+</head>
+<body>
+    <h1>🚀 ApiPostgresConnector API</h1>
+    <p>REST API для подключения к PostgreSQL</p>
+
+    <p class="note">
+        Все эндпоинты кроме <code>/api/v1/health</code> и <code>/api/v1/info</code>
+        требуют заголовок <code>X-API-Key</code>. Браузер отправить такой заголовок не может —
+        используйте curl, Postman или Python.
+    </p>
+
+    <h2>📋 Доступные эндпоинты</h2>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <code>/api/v1/health</code>
+        <p>Проверка состояния API и подключения к БД</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <code>/api/v1/info</code>
+        <p>Информация об API (auth_required, количество ключей)</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <code>/api/v1/tables</code>
+        <p>Список всех таблиц в подключении по умолчанию</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <code>/api/v1/tables/&lt;table_name&gt;/columns</code>
+        <p>Колонки указанной таблицы</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <code>/api/v1/tables/&lt;table_name&gt;/select?limit=100&amp;offset=0</code>
+        <p>Выбрать данные из таблицы</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <code>/api/v1/tables/&lt;table_name&gt;/insert</code>
+        <p>Вставить одну запись в таблицу (JSON объект в теле запроса)</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <code>/api/v1/tables/&lt;table_name&gt;/batch-insert</code>
+        <p>Массовая вставка записей (JSON массив объектов, максимум 1000)</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <code>/api/v1/query</code>
+        <p>Выполнить произвольный SQL запрос (только SELECT)</p>
+    </div>
+
+    <h2>🔀 Несколько подключений</h2>
+
+    <p>
+        У каждого подключения своя база данных и свои API-ключи. Имя подключения
+        указывается в URL после <code>/c/</code>:
+    </p>
+
+    <pre><code>GET /api/v1/c/&lt;имя_подключения&gt;/tables
+GET /api/v1/c/&lt;имя_подключения&gt;/tables/&lt;table_name&gt;/select
+POST /api/v1/c/&lt;имя_подключения&gt;/query</code></pre>
+
+    <p>Ключ подключения работает только со своим подключением.</p>
+
+    <h2>📖 Примеры использования</h2>
+
+    <h3>curl</h3>
+    <pre><code># Список таблиц (подключение по умолчанию)
+curl -H "X-API-Key: your-api-key" http://127.0.0.1:5000/api/v1/tables
+
+# Список таблиц именованного подключения
+curl -H "X-API-Key: your-api-key" http://127.0.0.1:5000/api/v1/c/crm/tables
+
+# SELECT
+curl -H "X-API-Key: your-api-key" \\
+     "http://127.0.0.1:5000/api/v1/c/crm/tables/users/select?limit=10"</code></pre>
+
+    <h3>Python</h3>
+    <pre><code>import requests
+
+BASE = "http://127.0.0.1:5000/api/v1"
+HEADERS = {"X-API-Key": "your-api-key"}
+
+# Проверка здоровья API (без ключа)
+print(requests.get(f"{BASE}/health").json())
+
+# Таблицы подключения по умолчанию
+tables = requests.get(f"{BASE}/tables", headers=HEADERS).json()
+
+# Таблицы именованного подключения
+tables = requests.get(f"{BASE}/c/crm/tables", headers=HEADERS).json()</code></pre>
+
+    <h3>PowerShell</h3>
+    <pre><code>Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/v1/tables" `
+    -Headers @{ "X-API-Key" = "your-api-key" }</code></pre>
+
+    <footer>
+        <p><small>ApiPostgresConnector v2.0.0</small></p>
+    </footer>
+</body>
+</html>
+"""
+
 
 class APIServer:
     """Flask API server manager."""
 
-    def __init__(self):
+    def __init__(self, gui_reference=None):
         self.app = None
+        self.server = None
         self.server_thread = None
+        self.registry = None
         self._running = False
+        self._gui_reference = gui_reference
+
+    @staticmethod
+    def _is_port_in_use(host: str, port: int, timeout: float = 0.5) -> bool:
+        """Проверяет, слушает ли кто-то порт.
+
+        На Windows werkzeug включает SO_REUSEADDR, поэтому второй экземпляр
+        приложения может «успешно» занять занятый порт — проверяем заранее.
+
+        Args:
+            host: Адрес сервера
+            port: Порт
+            timeout: Таймаут подключения
+
+        Returns:
+            bool: True если порт уже используется
+        """
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                return sock.connect_ex((host, port)) == 0
+        except OSError:
+            return False
 
     def _create_app(self, host: str, port: int) -> Flask:
         """Create and configure Flask application."""
         app = Flask(__name__)
-        CORS(app)
+        CORS(app, resources={r"/api/*": {"origins": LOCAL_ORIGINS}})
 
-        # Initialize database
-        db = Database(config.database)
+        # JSON-ответы вместо HTML для ошибок Flask
+        @app.errorhandler(HTTPException)
+        def handle_http_exception(exc):
+            return jsonify({"error": exc.description, "status": exc.code}), exc.code
 
-        # Initialize routes with API keys
-        api_keys = set(config.api.get("api_keys", []))
-        init_routes(db, api_keys)
+        @app.errorhandler(Exception)
+        def handle_unexpected_exception(exc):
+            logger.exception(f"Unhandled error: {exc}")
+            return jsonify({"error": "Internal server error"}), 500
+
+        # Реестр именованных подключений (БД + свои API-ключи)
+        self.registry = ConnectionRegistry(config)
+
+        # Create activity callback that updates GUI tray status
+        activity_callback = None
+        if self._gui_reference:
+            def callback():
+                try:
+                    self._gui_reference.after(0, self._gui_reference.update_tray_status)
+                except Exception:
+                    pass  # GUI may not be ready
+            activity_callback = callback
+        
+        init_routes(self.registry, activity_callback)
 
         # Register blueprint
         app.register_blueprint(api_bp)
@@ -78,121 +282,19 @@ class APIServer:
         @app.route("/")
         def index():
             """API documentation page."""
-            html = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>ApiPostgresConnector API</title>
-                <style>
-                    body {
-                        font-family: Arial, sans-serif;
-                        max-width: 800px;
-                        margin: 50px auto;
-                        padding: 20px;
-                        background: #1a1a1a;
-                        color: #ffffff;
-                    }
-                    h1 { color: #4a9eff; }
-                    h2 { color: #7cb3ff; margin-top: 30px; }
-                    .endpoint {
-                        background: #2d2d2d;
-                        padding: 15px;
-                        margin: 10px 0;
-                        border-radius: 5px;
-                        border-left: 4px solid #4a9eff;
-                    }
-                    .method {
-                        display: inline-block;
-                        padding: 3px 8px;
-                        border-radius: 3px;
-                        font-weight: bold;
-                        margin-right: 10px;
-                    }
-                    .get { background: #28a745; color: white; }
-                    .post { background: #007bff; color: white; }
-                    code {
-                        background: #3d3d3d;
-                        padding: 2px 6px;
-                        border-radius: 3px;
-                    }
-                    a { color: #4a9eff; }
-                </style>
-            </head>
-            <body>
-                <h1>🚀 ApiPostgresConnector API</h1>
-                <p>REST API для подключения к PostgreSQL</p>
-
-                <h2>📋 Доступные эндпоинты</h2>
-
-                <div class="endpoint">
-                    <span class="method get">GET</span>
-                    <code>/api/v1/health</code>
-                    <p>Проверка состояния API и подключения к БД</p>
-                </div>
-
-                <div class="endpoint">
-                    <span class="method get">GET</span>
-                    <code>/api/v1/tables</code>
-                    <p>Получить список всех таблиц в базе данных</p>
-                </div>
-
-                <div class="endpoint">
-                    <span class="method get">GET</span>
-                    <code>/api/v1/tables/<table_name>/columns</code>
-                    <p>Получить колонки указанной таблицы</p>
-                </div>
-
-                <div class="endpoint">
-                    <span class="method get">GET</span>
-                    <code>/api/v1/tables/<table_name>/select?limit=100&offset=0</code>
-                    <p>Выбрать данные из таблицы</p>
-                </div>
-
-                <div class="endpoint">
-                    <span class="method post">POST</span>
-                    <code>/api/v1/tables/<table_name>/insert</code>
-                    <p>Вставить данные в таблицу (JSON в теле запроса)</p>
-                </div>
-
-                <div class="endpoint">
-                    <span class="method post">POST</span>
-                    <code>/api/v1/query</code>
-                    <p>Выполнить произвольный SQL запрос (только SELECT)</p>
-                </div>
-
-                <h2>📖 Примеры использования</h2>
-
-                <h3>C# (ZennoPoster)</h3>
-                <pre><code>// Получить список таблиц
-var tables = instance.ActiveTab.Document.GetTag("DIV")
-    .Post("http://127.0.0.1:5000/api/v1/tables", "")
-    .ToString();</code></pre>
-
-                <h3>Python</h3>
-                <pre><code>import requests
-
-# Проверка здоровья API
-response = requests.get("http://127.0.0.1:5000/api/v1/health")
-print(response.json())
-
-# Получить таблицы
-tables = requests.get("http://127.0.0.1:5000/api/v1/tables").json()</code></pre>
-
-                <footer>
-                    <p><small>ApiPostgresConnector v1.0.0</small></p>
-                </footer>
-            </body>
-            </html>
-            """
-            return render_template_string(html)
+            return render_template_string(API_DOCS_HTML)
 
         return app
 
-    def start(self, host: str = None, port: int = None):
-        """Start the API server."""
+    def start(self, host: str = None, port: int = None) -> bool:
+        """Start the API server.
+
+        Returns:
+            bool: True если сервер запущен, False при ошибке (например, порт занят)
+        """
         if self._running:
             logger.warning("API server is already running")
-            return
+            return True
 
         # Use config values if not provided
         if host is None:
@@ -200,38 +302,51 @@ tables = requests.get("http://127.0.0.1:5000/api/v1/tables").json()</code></pre>
         if port is None:
             port = config.api.get("port", 5000)
 
-        # Auto-generate API key if none exists
-        api_keys = config.api.get("api_keys", [])
-        if not api_keys:
-            new_key = secrets.token_urlsafe(32)
-            logger.info(f"No API key found. Generating new key: {new_key[:8]}...")
-            config.update_api(api_keys=[new_key])
-            config.save()
-            logger.info("API key saved to config")
-
         self.app = self._create_app(host, port)
 
         # Get debug mode from config
         debug_mode = config.api.get("debug", False)
+        self.app.debug = debug_mode
+
+        # Порт уже занят другим процессом (в т.ч. вторым экземпляром приложения)
+        if self._is_port_in_use(host, port):
+            logger.error(f"Cannot start API server: {host}:{port} is already in use")
+            self.app = None
+            return False
+
+        # make_server создаёт сокет сразу — ошибка занятости порта видна синхронно
+        try:
+            self.server = make_server(host, port, self.app, threaded=True)
+        except OSError as e:
+            logger.error(f"Failed to start API server on {host}:{port}: {e}")
+            self.server = None
+            self._running = False
+            return False
 
         def run_server():
-            self.app.run(host=host, port=port, threaded=True, use_reloader=False, debug=debug_mode)
+            self.server.serve_forever()
 
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
         self._running = True
 
         logger.info(f"API server started on {host}:{port} (debug={debug_mode})")
+        return True
 
     def stop(self):
-        """Stop the API server."""
-        if not self._running:
-            return
-
-        # Note: Flask's run() doesn't support clean shutdown in this setup
-        # The daemon thread will be terminated when main app exits
+        """Stop the API server (полностью освобождает порт)."""
+        if self.server is not None:
+            try:
+                self.server.shutdown()
+                self.server.server_close()
+                logger.info("API server stopped")
+            except Exception as e:
+                logger.error(f"Error while stopping API server: {e}")
+            finally:
+                self.server = None
+        
+        self.server_thread = None
         self._running = False
-        logger.info("API server stopped")
 
     def is_running(self) -> bool:
         """Check if API server is running."""
@@ -242,16 +357,30 @@ def main():
     """Main application entry point."""
     logger.info("Starting ApiPostgresConnector...")
 
-    # Create API server instance
-    api_server = APIServer()
+    # Гарантируем наличие API-ключа (до создания GUI — чтобы ключ был виден во вкладке «Подключения»)
+    try:
+        config.ensure_api_key(config.default_connection)
+    except Exception as e:
+        logger.warning(f"Failed to ensure API key: {e}")
 
+    # Create GUI first (we need it for activity callback)
+    gui = MainWindow(api_server=None)
+    
+    # Create API server with GUI reference for activity callbacks
+    api_server = APIServer(gui_reference=gui)
+    
+    # Connect GUI to API server
+    gui.api_server = api_server
+    
+    # Connect GUI to API routes for activity callbacks
+    import src.api.routes as routes_module
+    routes_module._gui_reference = gui
+    
     # Auto-start API if configured
     if config.app.get("auto_start_api", True):
-        api_server.start()
-        logger.info("API server auto-started")
-
-    # Create and run GUI
-    gui = MainWindow(api_server=api_server)
+        started = api_server.start()
+        logger.info("API server auto-started" if started else "API server failed to start")
+    
     gui.run()
 
     # Cleanup

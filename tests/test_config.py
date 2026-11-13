@@ -60,72 +60,79 @@ class TestEncryptDecrypt:
         assert decrypt_password("") == ""
 
 
+def make_config(config_data=None):
+    """Создаёт Config без чтения файла и без записи в рабочий конфиг."""
+    from src.config import Config
+    
+    with patch.object(Config, 'load'):
+        config = Config()
+    
+    # Путь в temp — тесты никогда не трогают config/settings.json
+    config._config_path = Path(tempfile.gettempdir()) / "api_postgres_connector_test_settings.json"
+    config._fallback_path = config._config_path
+    
+    config._config = config_data if config_data is not None else config._get_default_config()
+    return config
+
+
 class TestConfig:
     """Tests for Config class."""
     
     def test_default_config(self):
         """Test default configuration values."""
-        from src.config import Config
+        config = make_config()
         
-        with patch.object(Config, 'load'):
-            config = Config()
-            config._config = config._get_default_config()
-            
-            assert config.database['host'] == 'localhost'
-            assert config.database['port'] == 5432
-            assert config.api['host'] == '127.0.0.1'
-            assert config.api['port'] == 5000
+        assert config.database['host'] == 'localhost'
+        assert config.database['port'] == 5432
+        assert config.api['host'] == '127.0.0.1'
+        assert config.api['port'] == 5000
+        assert len(config.connections) == 1
+        assert config.default_connection == 'По умолчанию'
     
     def test_update_database(self):
-        """Test updating database config."""
-        from src.config import Config
+        """Test updating database config of the default connection."""
+        config = make_config()
         
-        with patch.object(Config, 'load'):
-            config = Config()
-            config._config = config._get_default_config()
-            
-            config.update_database(host='newhost', port=5433)
-            
-            assert config.database['host'] == 'newhost'
-            assert config.database['port'] == 5433
+        config.update_database(host='newhost', port=5433)
+        
+        assert config.database['host'] == 'newhost'
+        assert config.database['port'] == 5433
     
     def test_update_api(self):
         """Test updating API config."""
-        from src.config import Config
+        config = make_config()
         
-        with patch.object(Config, 'load'):
-            config = Config()
-            config._config = config._get_default_config()
-            
-            config.update_api(port=5001, debug=True)
-            
-            assert config.api['port'] == 5001
-            assert config.api['debug'] is True
+        config.update_api(port=5001, debug=True)
+        
+        assert config.api['port'] == 5001
+        assert config.api['debug'] is True
     
     def test_update_gui(self):
         """Test updating GUI config."""
-        from src.config import Config
+        config = make_config()
         
-        with patch.object(Config, 'load'):
-            config = Config()
-            config._config = config._get_default_config()
-            
-            config.update_gui(theme='light', width=800)
-            
-            assert config.gui['theme'] == 'light'
-            assert config.gui['width'] == 800
+        config.update_gui(theme='light', width=800)
+        
+        assert config.gui['theme'] == 'light'
+        assert config.gui['width'] == 800
+    
+    def test_update_app(self):
+        """Test updating app config."""
+        config = make_config()
+        
+        config.update_app(enable_logging=False)
+        
+        assert config.app['enable_logging'] is False
     
     @patch('src.config.get_fernet')
     def test_save_with_encryption(self, mock_get_fernet):
         """Test saving config encrypts password."""
-        # Create a temporary file
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
             temp_path = f.name
         
         try:
             from src.config import Config
             
-            # Mock Fernet
             mock_fernet = MagicMock()
             mock_fernet.encrypt.return_value = b'encrypted'
             mock_get_fernet.return_value = mock_fernet
@@ -134,7 +141,12 @@ class TestConfig:
                 config = Config()
                 config._config_path = Path(temp_path)
                 config._config = {
-                    'database': {'password': 'secret'},
+                    'connections': [{
+                        'name': 'main',
+                        'database': {'password': 'secret'},
+                        'api_keys': []
+                    }],
+                    'default_connection': 'main',
                     'api': {},
                     'gui': {},
                     'app': {}
@@ -142,15 +154,138 @@ class TestConfig:
                 
                 config.save()
                 
-                # Read and check the file
-                with open(temp_path, 'r') as f:
+                with open(temp_path, 'r', encoding='utf-8') as f:
                     saved = json.load(f)
                 
                 # Password should be encrypted (different from original)
-                assert saved['database']['password'] != 'secret'
+                assert saved['connections'][0]['database']['password'] != 'secret'
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+    
+    @patch('src.config.get_fernet')
+    def test_save_does_not_mutate_memory(self, mock_get_fernet):
+        """Регрессия: save() не должен шифровать пароль в самой конфигурации.
+
+        Раньше использовалась поверхностная копия, поэтому в памяти оставался
+        шифротекст: следующий save() шифровал его ещё раз, а подключение к БД
+        получало неверный пароль.
+        """
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            temp_path = f.name
+        
+        try:
+            from src.config import Config
+            
+            mock_fernet = MagicMock()
+            mock_fernet.encrypt.return_value = b'encrypted'
+            mock_get_fernet.return_value = mock_fernet
+            
+            with patch.object(Config, '__init__', lambda self: None):
+                config = Config()
+                config._config_path = Path(temp_path)
+                config._config = {
+                    'connections': [{
+                        'name': 'main',
+                        'database': {'password': 'secret'},
+                        'api_keys': []
+                    }],
+                    'default_connection': 'main',
+                    'api': {}, 'gui': {}, 'app': {}
+                }
+                
+                config.save()
+                
+                # В памяти пароль остаётся открытым
+                assert config.database['password'] == 'secret'
+                
+                # Повторное сохранение даёт тот же результат (нет двойного шифрования)
+                config.save()
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    saved = json.load(f)
+                assert saved['connections'][0]['database']['password'] != 'secret'
+                assert config.database['password'] == 'secret'
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+
+class TestConnectionsConfig:
+    """Tests for multi-connection schema."""
+    
+    def test_migration_from_legacy_schema(self):
+        """Старая схема (database + api.api_keys) мигрируется в подключение."""
+        config = make_config({
+            'database': {'host': 'h', 'port': 5432, 'database': 'd', 'user': 'u', 'password': 'p'},
+            'api': {'host': '127.0.0.1', 'port': 5000, 'api_keys': ['legacy-key']},
+            'gui': {},
+            'app': {}
+        })
+        
+        config._migrate_legacy_schema()
+        
+        assert len(config.connections) == 1
+        connection = config.connections[0]
+        assert connection['database']['host'] == 'h'
+        assert connection['api_keys'] == ['legacy-key']
+        assert config.default_connection == connection['name']
+        
+        # Legacy-поля убраны, чтобы не дублироваться при сохранении
+        assert 'database' not in config._config
+        assert 'api_keys' not in config._config['api']
+    
+    def test_add_connection(self):
+        """Добавление подключения с проверкой уникальности имени."""
+        config = make_config()
+        
+        config.add_connection('crm', database={'host': 'crm-host'}, api_keys=['k'])
+        
+        assert len(config.connections) == 2
+        assert config.get_connection('crm')['database']['host'] == 'crm-host'
+        
+        with pytest.raises(ValueError):
+            config.add_connection('crm')
+    
+    def test_rename_connection(self):
+        """Переименование подключения."""
+        config = make_config()
+        config.add_connection('crm')
+        
+        config.rename_connection('crm', 'crm2')
+        
+        assert config.get_connection('crm') is None
+        assert config.get_connection('crm2') is not None
+    
+    def test_remove_connection(self):
+        """Удаление подключения (последнее удалить нельзя)."""
+        config = make_config()
+        config.add_connection('crm')
+        
+        assert config.remove_connection('crm') is True
+        assert len(config.connections) == 1
+        
+        assert config.remove_connection(config.default_connection) is False
+    
+    def test_set_default_connection(self):
+        """Назначение подключения по умолчанию."""
+        config = make_config()
+        config.add_connection('crm')
+        
+        config.set_default_connection('crm')
+        assert config.default_connection == 'crm'
+        
+        with pytest.raises(ValueError):
+            config.set_default_connection('nope')
+    
+    def test_ensure_api_key(self):
+        """Ключ генерируется, если его нет, и не меняется, если есть."""
+        config = make_config()
+        
+        key = config.ensure_api_key(config.default_connection)
+        assert key
+        assert config.get_connection(config.default_connection)['api_keys'] == [key]
+        
+        assert config.ensure_api_key(config.default_connection) == key
 
 
 if __name__ == '__main__':

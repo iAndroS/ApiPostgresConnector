@@ -9,7 +9,7 @@ print('=== Exact Replica Test ===', flush=True)
 # Simulate config
 class MockConfig:
     gui = {"width": 600, "height": 500, "theme": "dark-blue"}
-    database = {"host": "localhost", "port": 5432, "database": "zenno_db", "user": "postgres", "password": ""}
+    database = {"host": "localhost", "port": 5432, "database": "mydb", "user": "postgres", "password": ""}
     api = {"host": "127.0.0.1", "port": 5000, "debug": False}
     app = {"minimize_to_tray": False}
 

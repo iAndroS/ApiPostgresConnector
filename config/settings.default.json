@@ -1,0 +1,31 @@
+{
+  "connections": [
+    {
+      "name": "По умолчанию",
+      "database": {
+        "host": "localhost",
+        "port": 5432,
+        "database": "postgres",
+        "user": "postgres",
+        "password": ""
+      },
+      "api_keys": []
+    }
+  ],
+  "default_connection": "По умолчанию",
+  "api": {
+    "host": "127.0.0.1",
+    "port": 5000,
+    "debug": false
+  },
+  "gui": {
+    "theme": "dark-blue",
+    "width": 700,
+    "height": 700
+  },
+  "app": {
+    "auto_start_api": true,
+    "minimize_to_tray": true,
+    "enable_logging": true
+  }
+}

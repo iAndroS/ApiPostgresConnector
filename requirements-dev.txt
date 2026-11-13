@@ -1,0 +1,5 @@
+# Сборка EXE
+pyinstaller==6.14.1
+
+# Тесты
+pytest>=8.0.0
