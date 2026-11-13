@@ -345,7 +345,8 @@ class Config:
             "api": {
                 "host": "127.0.0.1",
                 "port": 5000,
-                "debug": False
+                "debug": False,
+                "require_auth": True
             },
             "gui": {
                 "theme": "dark-blue",

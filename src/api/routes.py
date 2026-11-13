@@ -64,6 +64,10 @@ def _check_api_key(profile) -> tuple:
     if profile is None:
         return False, "Database not initialized"
     
+    # Аутентификация может быть отключена в настройках (тестовый режим)
+    if _registry is not None and not _registry.require_auth:
+        return True, ""
+    
     # Если у подключения нет ключей — аутентификация не требуется
     if not profile.api_keys:
         return True, ""
@@ -302,11 +306,13 @@ def api_info(connection_name=None):
     profile = g.get("connection")
     db = g.get("db")
     
+    auth_required = bool(_registry.require_auth and _registry.total_key_count() > 0) if _registry else False
+    
     payload = {
         "name": "ApiPostgresConnector API",
         "version": APP_VERSION,
         "description": "REST API for PostgreSQL database access",
-        "auth_required": _registry.total_key_count() > 0 if _registry else False,
+        "auth_required": auth_required,
         "api_key_count": _registry.total_key_count() if _registry else 0,
         "database_connected": db.is_connected() if db else False,
         "connection": profile.name if profile else None,

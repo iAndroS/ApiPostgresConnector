@@ -212,13 +212,136 @@ tables = requests.get(f"{BASE}/c/crm/tables", headers=HEADERS).json()</code></pr
 </html>
 """
 
+
+# Страница-«пробник»: выполняет GET-запрос к API прямо из браузера.
+# Заголовок X-API-Key подставляет сервер, поэтому ключ не попадает в URL.
+TRY_PAGE_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ApiPostgresConnector — проверка запроса</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #ffffff;
+        }
+        h1 { color: #4a9eff; font-size: 20px; }
+        .url {
+            background: #2d2d2d;
+            padding: 12px;
+            border-radius: 5px;
+            word-break: break-all;
+            margin: 12px 0;
+        }
+        button {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 5px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:disabled { background: #555; cursor: default; }
+        pre {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            max-height: 60vh;
+        }
+        .status { margin: 10px 0; color: #7cb3ff; }
+        .note { color: #ffb347; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <h1>Проверка запроса к API</h1>
+    
+    <div class="url"><code id="path">{{path}}</code></div>
+    
+    <button id="send">Выполнить запрос</button>
+    <span class="status" id="status"></span>
+    
+    <pre id="result">Нажмите «Выполнить запрос»</pre>
+    
+    <p class="note">
+        Запрос выполняется с сервера приложения: заголовок X-API-Key подставляется автоматически,
+        сам ключ в URL не попадает.
+    </p>
+    
+    <script>
+        const path = {{path}};
+        const key = {{api_key}};
+        const button = document.getElementById('send');
+        const status = document.getElementById('status');
+        const result = document.getElementById('result');
+        
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            status.textContent = 'Выполняется...';
+            result.textContent = '';
+            
+            try {
+                const response = await fetch(path, {
+                    headers: key ? {'X-API-Key': key} : {}
+                });
+                const text = await response.text();
+                let formatted = text;
+                try {
+                    formatted = JSON.stringify(JSON.parse(text), null, 2);
+                } catch (e) {}
+                status.textContent = 'HTTP ' + response.status + ' ' + response.statusText;
+                result.textContent = formatted;
+            } catch (e) {
+                status.textContent = 'Ошибка запроса';
+                result.textContent = String(e);
+            } finally {
+                button.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
+"""
+
+
+def _api_key_for_path(path: str) -> str:
+    """Возвращает API-ключ для подключения, указанного в пути.
+
+    Args:
+        path: Путь запроса, например /api/v1/c/crm/tables
+
+    Returns:
+        API-ключ подключения (пустая строка, если ключа нет)
+    """
+    import re
+    from urllib.parse import unquote
+    
+    match = re.match(r"^/api/v1/c/([^/]+)/", path)
+    connection = None
+    
+    if match:
+        connection = config.get_connection(unquote(match.group(1)))
+    
+    if not connection:
+        connection = config.get_connection(config.default_connection)
+    
+    if not connection:
+        return ""
+    
+    api_keys = connection.get("api_keys") or []
+    return api_keys[0] if api_keys else ""
+
 # Подстановка версии в документацию (в HTML есть фигурные скобки — f-string не подходит)
 API_DOCS_HTML = API_DOCS_HTML.replace("{{VERSION}}", VERSION_STRING)
 
 
 class APIServer:
     """Flask API server manager."""
-
     def __init__(self, gui_reference=None):
         self.app = None
         self.server = None
@@ -292,6 +415,24 @@ class APIServer:
             """API documentation page."""
             return render_template_string(API_DOCS_HTML)
 
+        # Страница-«пробник»: выполняет запрос к API из браузера,
+        # подставляя заголовок X-API-Key на стороне сервера
+        @app.route("/try")
+        def try_endpoint():
+            """Выполняет API-запрос из браузера с ключом подключения."""
+            from flask import request
+            from urllib.parse import unquote
+
+            path = unquote(request.args.get("path", "/api/v1/health"))
+            
+            if not path.startswith("/api/"):
+                path = "/api/v1/health"
+            
+            api_key = _api_key_for_path(path)
+            
+            return render_template_string(
+                TRY_PAGE_HTML, path=path, api_key=api_key, version=APP_VERSION)
+        
         return app
 
     def start(self, host: str = None, port: int = None) -> bool:

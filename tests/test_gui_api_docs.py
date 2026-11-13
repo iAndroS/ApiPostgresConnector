@@ -34,23 +34,49 @@ class TestApiDocs:
         assert len(app.docs_cards) == 9
 
     def test_every_endpoint_has_copy_buttons(self, app):
-        """У каждого эндпоинта есть кнопки «Ссылка» и «cURL»."""
+        """У каждого эндпоинта есть кнопки «Скопировать ссылку» и «Команда curl»."""
         for card in app.docs_cards:
-            assert card["link_button"].cget("text") == "📋 Ссылка"
-            assert card["curl_button"].cget("text") == "cURL"
+            assert card["link_button"].cget("text") == "Скопировать ссылку"
+            assert card["curl_button"].cget("text") == "Команда curl"
 
-    def test_browser_button_only_for_public_endpoints(self, app):
-        """Кнопка «Открыть в браузере» — только у эндпоинтов без авторизации."""
-        with_browser = [c for c in app.docs_cards if c["browser_button"] is not None]
-        
-        assert len(with_browser) == 2
-        assert all(not c["requires_auth"] for c in with_browser)
+    def test_every_endpoint_has_open_button(self, app):
+        """Кнопка «Открыть» есть у всех эндпоинтов."""
+        for card in app.docs_cards:
+            assert card["browser_button"] is not None, f"Нет кнопки «Открыть»: {card['path']}"
+            assert card["browser_button"].cget("text") == "Открыть"
 
     def test_links_contain_base_url(self, app):
         """В карточках есть ссылка с базовым URL."""
         for card in app.docs_cards:
             assert card["url"].startswith("http://")
             assert "/api/v1" in card["url"]
+
+    def test_named_connection_url_format(self, app):
+        """Для именованного подключения путь имеет вид /api/v1/c/<имя>/..."""
+        from src.config import config
+
+        name = "ПодключениеДляТеста"
+        created = False
+        
+        if config.get_connection(name) is None:
+            config.add_connection(name)
+            created = True
+        
+        app._refresh_api_docs()
+        
+        try:
+            app.docs_connection_var.set(name)
+            app._on_docs_connection_change(name)
+            
+            urls = [card["url"] for card in app.docs_cards]
+            
+            # Префикс подключения — после /api/v1, а не перед ним
+            assert any(f"/api/v1/c/{name}/tables" in url for url in urls)
+            assert not any(url.count("/c/") > 1 for url in urls)
+        finally:
+            if created:
+                config.remove_connection(name)
+            app._refresh_api_docs()
 
     def test_curl_command_contains_key(self, app):
         """curl-команда защищённых эндпоинтов содержит заголовок с ключом."""

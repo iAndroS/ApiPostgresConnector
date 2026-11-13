@@ -101,6 +101,9 @@ class ConnectionRegistry:
         self._profiles: Dict[str, ConnectionProfile] = {}
         self._default_name = ""
         
+        # Требуется ли API-ключ для запросов (общий переключатель приложения)
+        self.require_auth = True
+        
         if config is not None:
             self.reload(config)
 
@@ -115,6 +118,9 @@ class ConnectionRegistry:
         """
         connections = list(getattr(config, "connections", []) or [])
         default_name = getattr(config, "default_connection", "") or ""
+        
+        api_config = getattr(config, "api", {}) or {}
+        self.require_auth = bool(api_config.get("require_auth", True))
         
         new_profiles: Dict[str, ConnectionProfile] = {}
         
