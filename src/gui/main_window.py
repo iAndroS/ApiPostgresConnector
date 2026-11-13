@@ -90,6 +90,14 @@ class MainWindow(ctk.CTk):
         # Перехват события закрытия окна (крестик)
         self.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
+        # Иконка в трее с самого старта: окно можно скрывать, приложение
+        # всегда остаётся доступным через трей
+        if PYTRAY_AVAILABLE:
+            try:
+                self._create_tray_icon()
+            except Exception as e:
+                logger.warning(f"Failed to create tray icon: {e}")
+
     def _on_window_resize(self, event):
         """Сохраняет новый размер окна в конфиг (с задержкой, чтобы не писать при каждом движении)."""
         if event.widget is not self:
@@ -1648,10 +1656,7 @@ class MainWindow(ctk.CTk):
         # Menu actions
         def on_quit(icon, item):
             """Quit application."""
-            global _tray_icon
-            if _tray_icon:
-                _tray_icon.stop()
-            self.quit()
+            self.after(0, self._shutdown_application)
         
         def on_show(icon, item):
             """Show window on left click."""
@@ -1696,6 +1701,46 @@ class MainWindow(ctk.CTk):
         self.lift()
         self.focus_force()
 
+    def _ensure_tray_icon(self) -> bool:
+        """Гарантирует работающую иконку трея.
+
+        Returns:
+            bool: True если иконка в трее работает и окно можно скрыть
+        """
+        if not PYTRAY_AVAILABLE:
+            logger.warning("pystray недоступен — сворачивание в трей отключено")
+            return False
+
+        if _tray_icon is not None:
+            return True
+
+        try:
+            self._create_tray_icon()
+        except Exception as e:
+            logger.warning(f"Failed to create tray icon: {e}")
+            return False
+
+        return _tray_icon is not None
+
+    def _shutdown_application(self):
+        """Полное закрытие приложения: трей, API, окно."""
+        global _tray_icon
+
+        if _tray_icon is not None:
+            try:
+                _tray_icon.stop()
+            except Exception:
+                pass
+            _tray_icon = None
+
+        if self.api_server is not None:
+            try:
+                self.api_server.stop()
+            except Exception:
+                pass
+
+        self.destroy()
+
     def _minimize_to_tray(self):
         """Minimize window to tray."""
         # Проверяем, что окно минимизировано (iconic)
@@ -1705,53 +1750,52 @@ class MainWindow(ctk.CTk):
                 self.after(100, self._do_minimize_to_tray)
 
     def _on_close_window(self):
-        """Handle window close event (X button)."""
-        if config.app.get("minimize_to_tray", True):
+        """Обработка закрытия окна (крестик)."""
+        if config.app.get("minimize_to_tray", True) and self._ensure_tray_icon():
             # Сворачиваем в трей вместо закрытия
             self.withdraw()
-            # Try to create tray icon if available and not already created
-            if PYTRAY_AVAILABLE:
-                try:
-                    if _tray_icon is None:
-                        self._create_tray_icon()
-                except Exception as e:
-                    logger.warning(f"Failed to create tray icon: {e}")
-                    # Fallback: just keep window hidden, tray not critical
-        else:
-            # Полностью закрываем приложение
-            self.quit()
+            return
+
+        # Трей недоступен — прятать окно нельзя, иначе приложение станет
+        # невидимым и недосягаемым. Закрываем полностью.
+        self._shutdown_application()
 
     def _do_minimize_to_tray(self):
-        """Actually minimize to tray."""
+        """Сворачивает окно в трей (только если иконка работает)."""
+        if not self._ensure_tray_icon():
+            self.iconify()
+            return
+
         self.withdraw()
-        if PYTRAY_AVAILABLE:
-            try:
-                if _tray_icon is None:
-                    self._create_tray_icon()
-            except Exception as e:
-                logger.warning(f"Failed to create tray icon: {e}")
 
     def _tray_tooltip_text(self) -> str:
-        """Текст подсказки трея: статус, подключения и время последней активности."""
+        """Текст подсказки трея: статус, подключения и время последней активности.
+
+        Windows ограничивает подсказку 128 символами — длинные детали ошибок
+        в подсказку не попадают (они видны в GUI и в app.log).
+        """
         status = "Работает" if (self.api_server and self.api_server.is_running()) else "Не запущен"
         time_str = _last_activity_time.strftime("%Y-%m-%d %H:%M:%S") if _last_activity_time else "нет запросов"
         lines = [
             "ApiPostgresConnector",
             f"Статус: {status}",
             f"Подключений: {len(config.connections)}",
-            f"Последняя активность: {time_str}"
+            f"Последняя активность: {time_str}",
         ]
-        
+
         registry = get_registry()
         if registry:
-            for name in registry.names():
-                profile = registry.get(name)
-                if profile and profile.is_db_created and not profile.db.is_connected():
-                    error = profile.last_error
-                    if error:
-                        lines.append(f"Ошибка БД ({name}): {error.get('message')}")
-        
-        return "\n".join(lines)
+            broken = [
+                name for name in registry.names()
+                if (profile := registry.get(name)) is not None
+                and profile.is_db_created
+                and not profile.db.is_connected()
+            ]
+            if broken:
+                lines.append(f"Нет связи с БД: {', '.join(broken)}")
+
+        # Жёсткий лимит Windows: szTip — максимум 127 символов
+        return "\n".join(lines)[:127]
 
     def update_tray_status(self):
         """Обновляет время последней активности (вызывается из потока API-сервера).

@@ -655,9 +655,74 @@ class APIServer:
         return self._running
 
 
+# Дескриптор мьютекса единственного экземпляра (не даёт мьютексу умереть)
+_single_instance_handle = None
+
+
+def acquire_single_instance() -> bool:
+    """Гарантирует, что запущен только один экземпляр приложения.
+
+    На Windows используется именованный мьютекс: второй экземпляр получает
+    ERROR_ALREADY_EXISTS и должен завершиться, иначе копии конфликтуют
+    за порт API и файл конфигурации.
+
+    Returns:
+        bool: True если этот процесс может продолжить работу
+    """
+    global _single_instance_handle
+
+    if sys.platform != "win32":
+        return True
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateMutexW(None, False, "ApiPostgresConnector.SingleInstance")
+
+        if not handle:
+            return True
+
+        # ERROR_ALREADY_EXISTS = 183
+        if kernel32.GetLastError() == 183:
+            kernel32.CloseHandle(handle)
+            return False
+
+        _single_instance_handle = handle
+        return True
+    except Exception as e:
+        logger.warning(f"Single-instance check failed: {e}")
+        return True
+
+
+def _show_already_running_message():
+    """Показывает сообщение о том, что приложение уже запущено."""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        messagebox.showinfo(
+            "ApiPostgresConnector",
+            "Приложение уже запущено.\n\n"
+            "Найдите его значок в системном трее — возможно, "
+            "он находится в скрытых значках (стрелка ^ рядом с часами).",
+        )
+        root.destroy()
+    except Exception as e:
+        logger.warning(f"Failed to show message: {e}")
+
+
 def main():
     """Main application entry point."""
     logger.info("Starting ApiPostgresConnector...")
+
+    if not acquire_single_instance():
+        logger.warning("Another instance is already running, exiting")
+        _show_already_running_message()
+        return
 
     # Гарантируем наличие API-ключа у каждого подключения
     # (до создания GUI — чтобы ключ был виден во вкладке «Подключения»)

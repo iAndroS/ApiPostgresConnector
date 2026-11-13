@@ -25,6 +25,13 @@ RECONNECT_COOLDOWN = 30.0
 # Имя приложения в pg_stat_activity — чтобы соединения было видно в списке на стороне БД
 APPLICATION_NAME = "ApiPostgresConnector"
 
+# Сколько запросов выполнять на одном соединении, потом обновлять его.
+# Некоторые серверы (за WAF/DDoS-защитой, fail2ban и т.п.) обрывают сессию,
+# если запросы идут слишком часто: 5-й запрос подряд приводит к обрыву и
+# 20-секундному ожиданию. Обновление соединения снимает проблему.
+# 0 — без ограничения (обычные серверы).
+MAX_QUERIES_PER_CONNECTION = int(os.environ.get("API_MAX_QUERIES_PER_CONNECTION", "3"))
+
 # Человекочитаемые подсказки по типам ошибок
 DB_ERROR_HINTS: Dict[str, str] = {
     "auth_failed": "Неверный пользователь или пароль",
@@ -226,6 +233,8 @@ class Database:
         self._tables_cache_at: float = 0.0
         self._last_connect_attempt: Optional[float] = None
         self._connect_failed = False
+        # Счётчик запросов на текущем соединении (для профилактической ротации)
+        self._query_count = 0
         # Подключения не должны идти параллельно: иначе запросы висят
         # на собственном подключении и дублируют попытки
         self._connect_lock = threading.RLock()
@@ -360,6 +369,24 @@ class Database:
         """True если прямо сейчас идёт попытка подключения."""
         return self._connecting
     
+    def _rotate_connection_if_needed(self):
+        """Обновляет соединение, если на нём выполнено слишком много запросов.
+
+        Некоторые серверы обрывают сессию при частых запросах (5-й запрос подряд
+        приводит к 20-секундному ожиданию). Ротация снимает проблему.
+        """
+        limit = MAX_QUERIES_PER_CONNECTION
+        
+        if limit <= 0 or self._query_count < limit:
+            return
+        
+        logger.debug(f"Rotating connection after {self._query_count} queries")
+        
+        try:
+            self.reconnect()
+        except Exception as e:
+            logger.debug(f"Connection rotation failed: {e}")
+
     def reconnect(self):
         """Reconnect to database."""
         with self._connect_lock:
@@ -369,6 +396,7 @@ class Database:
                 except Exception:
                     pass
             self._invalidate_tables_cache()
+            self._query_count = 0
             self._connect()
     
     def reconnect_async(self) -> bool:
@@ -447,6 +475,9 @@ class Database:
                     return None
                 self.reconnect()
             
+            # Профилактическая ротация: сервер может обрывать сессию при частых запросах
+            self._rotate_connection_if_needed()
+            
             try:
                 with self.connection.cursor() as cursor:
                     cursor.execute(query, params)
@@ -457,6 +488,7 @@ class Database:
                         result = []
                     
                     self.connection.commit()
+                    self._query_count += 1
                     return result
             except psycopg2.OperationalError as e:
                 # Обрыв соединения — переподключаемся и пробуем ещё раз
