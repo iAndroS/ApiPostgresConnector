@@ -183,4 +183,28 @@ class ConnectionRegistry:
         """Закрывает все подключения к БД (при выходе из приложения)."""
         with self._lock:
             for profile in self._profiles.values():
-                profile.close_db()
+                profile.close_db(reason="application exit")
+    
+    def start_background_connect(self):
+        """Подключается ко всем подключениям в фоновом потоке.
+
+        Нужен, чтобы состояние соединения было известно (например, для /health),
+        не блокируя запуск приложения и HTTP-запросы.
+
+        Returns:
+            threading.Thread: запущенный поток (daemon)
+        """
+        def worker():
+            with self._lock:
+                profiles = list(self._profiles.values())
+            
+            for profile in profiles:
+                try:
+                    profile.db
+                except Exception as e:
+                    logger.warning(f"Background connect failed for '{profile.name}': {e}")
+        
+        thread = threading.Thread(target=worker, daemon=True, name="db-background-connect")
+        thread.start()
+        
+        return thread

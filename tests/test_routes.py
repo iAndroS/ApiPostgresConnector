@@ -134,6 +134,76 @@ class TestApiRoutes:
         data = response.get_json()
         assert data['status'] == 'ok'
         assert data['connection'] == 'main'
+        # Состояние подключения реальное, а не всегда false
+        assert data['database_connected'] is True
+    
+    def test_health_reports_real_connection_state(self, registry):
+        """Health отдаёт фактическое состояние подключения (а не всегда false)."""
+        from flask import Flask
+        
+        app = Flask(__name__)
+        init_routes(registry)
+        app.register_blueprint(api_bp)
+        
+        with app.test_client() as client:
+            response = client.get('/api/v1/health')
+            
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['database_connected'] is True
+    
+    def test_health_does_not_block_on_database(self, registry):
+        """Health не ждёт подключения к БД (иначе мониторинг встанет)."""
+        from flask import Flask
+        import time
+        
+        profile = registry.get('main')
+        profile._db = None
+        
+        app = Flask(__name__)
+        init_routes(registry)
+        app.register_blueprint(api_bp)
+        
+        with app.test_client() as client:
+            started = time.monotonic()
+            response = client.get('/api/v1/health')
+            elapsed = time.monotonic() - started
+            
+            assert response.status_code == 200
+            assert elapsed < 2, f"Health отвечал {elapsed:.1f} с — он ждёт подключения к БД"
+    
+    def test_health_reports_failure_reason(self, registry):
+        """При недоступной БД health отдаёт причину ошибки."""
+        from flask import Flask
+        
+        profile = registry.get('main')
+        mock_db = MagicMock()
+        mock_db.is_connected.return_value = False
+        mock_db.get_last_error.return_value = {
+            "kind": "auth_failed",
+            "message": 'password authentication failed for user "secretuser"',
+            "detail": None,
+            "hint": None,
+            "sqlstate": "28P01",
+            "severity": "FATAL",
+            "user_hint": "Неверный пользователь или пароль",
+        }
+        profile.set_db(mock_db)
+        profile.db.should_retry_connect.return_value = False
+        
+        app = Flask(__name__)
+        init_routes(registry)
+        app.register_blueprint(api_bp)
+        
+        with app.test_client() as client:
+            response = client.get('/api/v1/health')
+            
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['database_connected'] is False
+            assert data['last_error']['kind'] == 'auth_failed'
+            # Имя пользователя в публичном ответе не раскрывается
+            assert "secretuser" not in data['last_error']['message']
     
     def test_api_info_no_auth(self, client):
         """Info endpoint doesn't require auth."""

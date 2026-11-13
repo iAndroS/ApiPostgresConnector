@@ -247,7 +247,8 @@ def check_auth_and_connection():
     g.connection = profile
     g.connection_name = profile.name
     
-    # Публичные эндпоинты не создают подключение к БД и не требуют ключ
+    # Публичные эндпоинты не требуют ключ и не блокируют подключением к БД:
+    # реальное состояние отдаёт /health, а подключение поднимается в фоне
     if _is_public_endpoint():
         g.db = profile.db if profile.is_db_created else None
         return None

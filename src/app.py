@@ -266,6 +266,10 @@ class APIServer:
 
         # Реестр именованных подключений (БД + свои API-ключи)
         self.registry = ConnectionRegistry(config)
+        
+        # Подключение к БД в фоне: состояние соединения известно сразу,
+        # но запуск приложения и HTTP-запросы не блокируются
+        self.registry.start_background_connect()
 
         # Create activity callback that updates GUI tray status
         activity_callback = None

@@ -120,6 +120,20 @@ class TestConnectionRegistry:
         
         assert registry.get("main") is not profile
         assert registry.get("main").is_db_created is False
+    
+    def test_background_connect_creates_database(self):
+        """Фоновое подключение создаёт Database — состояние становится известным."""
+        config = FakeConfig([make_connection("main")], default_connection="main")
+        registry = ConnectionRegistry(config)
+        
+        profile = registry.get("main")
+        assert profile.is_db_created is False
+        
+        thread = registry.start_background_connect()
+        thread.join(timeout=5)
+        
+        # Подключение создано (реальная БД может быть недоступна — это неважно)
+        assert profile.is_db_created is True
 
 
 if __name__ == "__main__":

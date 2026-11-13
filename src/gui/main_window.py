@@ -231,6 +231,10 @@ class MainWindow(ctk.CTk):
         self.lbl_connection_status = ctk.CTkLabel(editor, text="", anchor="w")
         self.lbl_connection_status.grid(row=6, column=0, columnspan=3, padx=4, pady=4, sticky="w")
         
+        # Состояние подключения к БД (обновляется каждые 2 секунды)
+        self.lbl_db_state = ctk.CTkLabel(editor, text="", anchor="w")
+        self.lbl_db_state.grid(row=7, column=0, columnspan=3, padx=4, pady=(0, 4), sticky="w")
+        
         # --- API-ключи выбранного подключения ---
         self.lbl_keys_header = ctk.CTkLabel(container, text="API-ключи подключения", anchor="w",
                                             font=ctk.CTkFont(size=13, weight="bold"))
@@ -1297,6 +1301,7 @@ class MainWindow(ctk.CTk):
         
         if registry:
             registry.reload(config)
+            registry.start_background_connect()
             logger.info("Runtime configuration reloaded")
         
         self._refresh_connections_tree()
@@ -1425,26 +1430,34 @@ class MainWindow(ctk.CTk):
         self.after(2000, self._update_api_status)
 
     def _update_last_db_error(self):
-        """Показывает в статусе причину последней ошибки подключения к БД."""
+        """Показывает в статусе состояние подключения к БД и причину ошибки."""
         registry = get_registry()
         if not registry:
             return
         
-        profile = registry.get_default()
-        if not profile or not profile.is_db_created:
+        profile = registry.get(self._current_connection) if self._current_connection else registry.get_default()
+        if not profile:
+            return
+        
+        if not profile.is_db_created:
+            self.lbl_db_state.configure(
+                text="ℹ️ БД: соединение создаётся при первом запросе к API",
+                text_color="gray")
             return
         
         error = profile.last_error
-        if not error:
+        
+        if profile.db.is_connected():
+            self.lbl_db_state.configure(text="✅ БД: подключено", text_color="green")
             return
         
-        message = error.get("message") or ""
-        hint = error.get("user_hint") or ""
+        message = (error or {}).get("message") or "нет соединения"
+        hint = (error or {}).get("user_hint") or ""
         text = f"❌ БД недоступна: {message}" + (f" — {hint}" if hint else "")
         
-        current = self.lbl_connection_status.cget("text")
+        current = self.lbl_db_state.cget("text")
         if not current.startswith("❌ БД недоступна"):
-            self.lbl_connection_status.configure(text=text, text_color="red")
+            self.lbl_db_state.configure(text=text, text_color="red")
 
     def run(self):
         """Start the GUI main loop."""
