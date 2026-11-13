@@ -158,8 +158,6 @@ class MainWindow(ctk.CTk):
                       command=self._add_connection).pack(side="left", padx=1)
         ctk.CTkButton(buttons_frame, text="Изменить", width=70,
                       command=self._edit_connection).pack(side="left", padx=2)
-        ctk.CTkButton(buttons_frame, text="Переименовать", width=85,
-                      command=self._rename_connection).pack(side="left", padx=2)
         ctk.CTkButton(buttons_frame, text="Дублировать", width=80,
                       command=self._duplicate_connection).pack(side="left", padx=2)
         ctk.CTkButton(buttons_frame, text="Удалить", width=65,
@@ -183,40 +181,45 @@ class MainWindow(ctk.CTk):
                                               font=ctk.CTkFont(size=12, weight="bold"))
         self.lbl_editor_title.grid(row=0, column=0, columnspan=3, padx=4, pady=(6, 2), sticky="w")
 
+        # Название подключения
+        ctk.CTkLabel(editor, text="Название:").grid(row=1, column=0, padx=4, pady=2, sticky="w")
+        self.entry_name = ctk.CTkEntry(editor, width=240)
+        self.entry_name.grid(row=1, column=1, padx=4, pady=2, sticky="ew")
+
         # DSN
-        ctk.CTkLabel(editor, text="DSN:").grid(row=1, column=0, padx=4, pady=2, sticky="w")
+        ctk.CTkLabel(editor, text="DSN:").grid(row=2, column=0, padx=4, pady=2, sticky="w")
         self.entry_dsn = ctk.CTkEntry(editor, width=240)
-        self.entry_dsn.grid(row=1, column=1, padx=4, pady=2, sticky="ew")
+        self.entry_dsn.grid(row=2, column=1, padx=4, pady=2, sticky="ew")
         ctk.CTkButton(editor, text="Из DSN", width=70,
-                      command=self._parse_dsn).grid(row=1, column=2, padx=4, pady=2)
+                      command=self._parse_dsn).grid(row=2, column=2, padx=4, pady=2)
 
         # Host
-        ctk.CTkLabel(editor, text="Хост:").grid(row=2, column=0, padx=4, pady=2, sticky="w")
+        ctk.CTkLabel(editor, text="Хост:").grid(row=3, column=0, padx=4, pady=2, sticky="w")
         self.entry_host = ctk.CTkEntry(editor, width=240)
-        self.entry_host.grid(row=2, column=1, padx=4, pady=2, sticky="ew")
+        self.entry_host.grid(row=3, column=1, padx=4, pady=2, sticky="ew")
 
         # Port
-        ctk.CTkLabel(editor, text="Порт:").grid(row=3, column=0, padx=4, pady=2, sticky="w")
+        ctk.CTkLabel(editor, text="Порт:").grid(row=4, column=0, padx=4, pady=2, sticky="w")
         self.entry_port = ctk.CTkEntry(editor, width=240)
-        self.entry_port.grid(row=3, column=1, padx=4, pady=2, sticky="ew")
+        self.entry_port.grid(row=4, column=1, padx=4, pady=2, sticky="ew")
 
         # Database name
-        ctk.CTkLabel(editor, text="База данных:").grid(row=4, column=0, padx=4, pady=2, sticky="w")
+        ctk.CTkLabel(editor, text="База данных:").grid(row=5, column=0, padx=4, pady=2, sticky="w")
         self.entry_dbname = ctk.CTkEntry(editor, width=240)
-        self.entry_dbname.grid(row=4, column=1, padx=4, pady=2, sticky="ew")
+        self.entry_dbname.grid(row=5, column=1, padx=4, pady=2, sticky="ew")
 
         # User
-        ctk.CTkLabel(editor, text="Пользователь:").grid(row=5, column=0, padx=4, pady=2, sticky="w")
+        ctk.CTkLabel(editor, text="Пользователь:").grid(row=6, column=0, padx=4, pady=2, sticky="w")
         self.entry_user = ctk.CTkEntry(editor, width=240)
-        self.entry_user.grid(row=5, column=1, padx=4, pady=2, sticky="ew")
+        self.entry_user.grid(row=6, column=1, padx=4, pady=2, sticky="ew")
 
         # Password
-        ctk.CTkLabel(editor, text="Пароль:").grid(row=6, column=0, padx=4, pady=2, sticky="w")
+        ctk.CTkLabel(editor, text="Пароль:").grid(row=7, column=0, padx=4, pady=2, sticky="w")
         self.entry_password = ctk.CTkEntry(editor, width=240, show="*")
-        self.entry_password.grid(row=6, column=1, padx=4, pady=2, sticky="ew")
+        self.entry_password.grid(row=7, column=1, padx=4, pady=2, sticky="ew")
 
         editor_buttons = ctk.CTkFrame(editor, fg_color="transparent")
-        editor_buttons.grid(row=7, column=0, columnspan=3, padx=4, pady=(6, 4), sticky="w")
+        editor_buttons.grid(row=8, column=0, columnspan=3, padx=4, pady=(6, 4), sticky="w")
 
         self.btn_test = ctk.CTkButton(
             editor_buttons, text="Проверить подключение", width=160, command=self._test_connection
@@ -427,7 +430,7 @@ class MainWindow(ctk.CTk):
         self._hide_editor()
 
         self.lbl_connection_status.configure(
-            text=f"Параметры подключения «{name}» сохранены", text_color="green")
+            text=f"Параметры подключения «{self._current_connection}» сохранены", text_color="green")
 
     def _load_connection_into_editor(self, name: str):
         """Заполняет поля формы данными подключения."""
@@ -439,6 +442,8 @@ class MainWindow(ctk.CTk):
         self._current_connection = name
         self._editor_connection = name
 
+        self.entry_name.delete(0, "end")
+        self.entry_name.insert(0, name)
         self.entry_dsn.delete(0, "end")
         self.entry_host.delete(0, "end")
         self.entry_host.insert(0, db.get("host", ""))
@@ -456,6 +461,8 @@ class MainWindow(ctk.CTk):
 
     def _apply_editor_to_connection(self) -> bool:
         """Переносит значения из полей формы в конфиг выбранного подключения.
+
+        Название из формы переименовывает подключение.
 
         Returns:
             bool: True если значения применены, False при ошибке валидации
@@ -480,6 +487,10 @@ class MainWindow(ctk.CTk):
             )
             return False
         
+        # Название переименовывает подключение — проверяем до применения полей
+        if not self._apply_editor_name(name):
+            return False
+        
         connection.setdefault("database", {}).update({
             "host": self.entry_host.get().strip(),
             "port": int(port_text),
@@ -487,6 +498,39 @@ class MainWindow(ctk.CTk):
             "user": self.entry_user.get().strip(),
             "password": self.entry_password.get()
         })
+        
+        return True
+    
+    def _apply_editor_name(self, name: str) -> bool:
+        """Переименовывает подключение по названию из формы.
+
+        Returns:
+            bool: True если переименование выполнено (или не требовалось)
+        """
+        new_name = self.entry_name.get().strip()
+        
+        if not new_name:
+            self.lbl_connection_status.configure(
+                text="Внимание: название подключения не может быть пустым", text_color="orange")
+            return False
+        
+        if new_name == name:
+            return True
+        
+        if config.get_connection(new_name):
+            self.lbl_connection_status.configure(
+                text=f"Внимание: подключение «{new_name}» уже существует", text_color="orange")
+            return False
+        
+        try:
+            config.rename_connection(name, new_name)
+        except ValueError as e:
+            self.lbl_connection_status.configure(text=f"Внимание: {e}", text_color="orange")
+            return False
+        
+        self._current_connection = new_name
+        self._editor_connection = new_name
+        self.lbl_editor_title.configure(text=f"Параметры подключения «{new_name}»")
         
         return True
     
@@ -520,31 +564,6 @@ class MainWindow(ctk.CTk):
         self._load_connection_into_editor(name)
         self._show_editor()
         self.lbl_connection_status.configure(text=f"Создано подключение '{name}'", text_color="green")
-    
-    def _rename_connection(self):
-        """Переименовывает выбранное подключение."""
-        name = self._current_connection
-        if not name:
-            self.lbl_connection_status.configure(text="Внимание: не выбрано подключение", text_color="orange")
-            return
-        
-        new_name = self._prompt_text("Переименование", "Новое название:", initial_value=name)
-        
-        if not new_name or new_name == name:
-            return
-        
-        try:
-            config.rename_connection(name, new_name)
-        except ValueError as e:
-            self.lbl_connection_status.configure(text=f"Внимание: {e}", text_color="orange")
-            return
-        
-        self._current_connection = new_name
-        config.save()
-        self._refresh_connections_table()
-        self._reload_runtime_config()
-        self.lbl_connection_status.configure(
-            text=f"Подключение переименовано в '{new_name}'", text_color="green")
     
     def _duplicate_connection(self):
         """Создаёт копию выбранного подключения."""
@@ -675,7 +694,8 @@ class MainWindow(ctk.CTk):
             self.tab_api,
             text="Требовать API-ключ для запросов",
             onvalue=True,
-            offvalue=False
+            offvalue=False,
+            command=self._on_require_auth_toggle
         )
         self.switch_require_auth.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
         if api_config.get("require_auth", True):
@@ -779,6 +799,17 @@ class MainWindow(ctk.CTk):
         if self.docs_connection_var.get() not in values:
             self.docs_connection_var.set(values[0] if values else "")
     
+    def _auth_required(self) -> bool:
+        """Требуется ли API-ключ для запросов (по состоянию переключателя)."""
+        if hasattr(self, "switch_require_auth"):
+            return bool(self.switch_require_auth.get())
+
+        return bool(config.api.get("require_auth", True))
+
+    def _on_require_auth_toggle(self):
+        """Переключатель «Требовать API-ключ» — обновляем ссылки в документации."""
+        self._refresh_api_docs()
+
     def _refresh_api_docs(self):
         """Перестраивает карточки эндпоинтов (актуальные хост, порт, ключ и подключение)."""
         if not hasattr(self, "docs_scroll_frame"):
@@ -830,7 +861,7 @@ class MainWindow(ctk.CTk):
         api_key = api_keys[0] if api_keys else "<API-KEY>"
         
         # Аутентификация может быть отключена — тогда ключ не нужен
-        require_auth = bool(config.api.get("require_auth", True))
+        require_auth = self._auth_required()
         
         # Все ссылки — в именованной форме (/api/v1/c/<имя>/...): в URL всегда видно,
         # к какому подключению относится запрос. Имя кодируется — пробелы и кириллица.
@@ -1055,8 +1086,8 @@ class MainWindow(ctk.CTk):
         """Setup paste functionality for entry fields (right-click menu only)."""
         # Bind right-click menu for all entry fields
         db_entries = [
-            self.entry_dsn, self.entry_host, self.entry_port, self.entry_dbname,
-            self.entry_user, self.entry_password
+            self.entry_name, self.entry_dsn, self.entry_host, self.entry_port,
+            self.entry_dbname, self.entry_user, self.entry_password
         ]
         for entry in db_entries:
             # CTkEntry has native Ctrl+V support, just bind right-click menu
@@ -1402,26 +1433,7 @@ class MainWindow(ctk.CTk):
         # Tooltip text
         def get_tooltip_text() -> str:
             """Get tooltip text."""
-            global _last_activity_time
-            status = "Работает" if (self.api_server and self.api_server.is_running()) else "Не запущен"
-            time_str = _last_activity_time.strftime("%Y-%m-%d %H:%M:%S") if _last_activity_time else "N/A"
-            lines = [
-                "ApiPostgresConnector",
-                f"Статус: {status}",
-                f"Подключений: {len(config.connections)}",
-                f"Последняя активность: {time_str}"
-            ]
-            
-            registry = get_registry()
-            if registry:
-                for name in registry.names():
-                    profile = registry.get(name)
-                    if profile and profile.is_db_created and not profile.db.is_connected():
-                        error = profile.last_error
-                        if error:
-                            lines.append(f"Ошибка БД ({name}): {error.get('message')}")
-            
-            return "\n".join(lines)
+            return self._tray_tooltip_text()
         
         # Menu actions
         def on_quit(icon, item):
@@ -1509,12 +1521,39 @@ class MainWindow(ctk.CTk):
             except Exception as e:
                 logger.warning(f"Failed to create tray icon: {e}")
 
+    def _tray_tooltip_text(self) -> str:
+        """Текст подсказки трея: статус, подключения и время последней активности."""
+        status = "Работает" if (self.api_server and self.api_server.is_running()) else "Не запущен"
+        time_str = _last_activity_time.strftime("%Y-%m-%d %H:%M:%S") if _last_activity_time else "нет запросов"
+        lines = [
+            "ApiPostgresConnector",
+            f"Статус: {status}",
+            f"Подключений: {len(config.connections)}",
+            f"Последняя активность: {time_str}"
+        ]
+        
+        registry = get_registry()
+        if registry:
+            for name in registry.names():
+                profile = registry.get(name)
+                if profile and profile.is_db_created and not profile.db.is_connected():
+                    error = profile.last_error
+                    if error:
+                        lines.append(f"Ошибка БД ({name}): {error.get('message')}")
+        
+        return "\n".join(lines)
+
     def update_tray_status(self):
-        """Update tray icon status after API request."""
+        """Обновляет время последней активности (вызывается из потока API-сервера).
+
+        Метод не трогает виджеты Tk — только глобальную переменную и иконку трея,
+        поэтому его можно вызывать из рабочего потока werkzeug.
+        """
         global _last_activity_time
         _last_activity_time = datetime.now()
         
         if _tray_icon:
-            status = "Работает" if (self.api_server and self.api_server.is_running()) else "Не запущен"
-            time_str = _last_activity_time.strftime("%Y-%m-%d %H:%M:%S")
-            _tray_icon.title = f"ApiPostgresConnector\nСтатус: {status}\nПоследняя активность: {time_str}"
+            try:
+                _tray_icon.title = self._tray_tooltip_text()
+            except Exception as e:
+                logger.debug(f"Failed to update tray tooltip: {e}")

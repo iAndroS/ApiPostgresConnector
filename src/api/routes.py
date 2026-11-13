@@ -194,10 +194,11 @@ def _notify_activity():
         except Exception as e:
             logger.debug(f"Activity callback error: {e}")
     
-    # Fallback: try direct GUI reference
+    # Fallback: обновляем напрямую — метод не трогает виджеты Tk,
+    # поэтому его безопасно вызывать из рабочего потока сервера
     if _gui_reference:
         try:
-            _gui_reference.after(0, _gui_reference.update_tray_status)
+            _gui_reference.update_tray_status()
         except Exception as e:
             logger.debug(f"Direct GUI update error: {e}")
 
@@ -329,6 +330,8 @@ def health_check(connection_name=None):
             "message": sanitize_db_message(error.get("message") or "")
         }
     
+    _notify_activity()
+    
     return jsonify(payload)
 
 
@@ -363,6 +366,8 @@ def api_info(connection_name=None):
     error = profile.last_error if profile else None
     if error:
         payload["last_error_kind"] = error.get("kind")
+    
+    _notify_activity()
     
     return jsonify(payload)
 

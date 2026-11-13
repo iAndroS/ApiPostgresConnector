@@ -189,6 +189,35 @@ class TestConnectionEditor:
         assert config.get_connection("КлючиA")["database"]["host"] == "test-host"
         assert app._is_editor_visible() is False
 
+    def test_name_field_renames_connection(self, app, two_connections):
+        """Название в форме переименовывает подключение."""
+        from src.config import config
+
+        app._current_connection = "КлючиA"
+        app._edit_connection()
+
+        app.entry_name.delete(0, "end")
+        app.entry_name.insert(0, "Переименовано")
+        app._save_connection()
+
+        assert config.get_connection("Переименовано") is not None
+        assert config.get_connection("КлючиA") is None
+        assert app._current_connection == "Переименовано"
+
+    def test_duplicate_name_is_rejected(self, app, two_connections):
+        """Новое название не должно совпадать с существующим подключением."""
+        from src.config import config
+
+        app._current_connection = "КлючиA"
+        app._edit_connection()
+
+        app.entry_name.delete(0, "end")
+        app.entry_name.insert(0, "КлючиB")
+        app._save_connection()
+
+        assert config.get_connection("КлючиA") is not None
+        assert app._current_connection == "КлючиA"
+
     def test_hidden_editor_does_not_overwrite_settings(self, app, two_connections):
         """Скрытая форма не перетирает параметры подключения."""
         from src.config import config

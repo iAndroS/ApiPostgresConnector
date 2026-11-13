@@ -397,12 +397,14 @@ class APIServer:
         # но запуск приложения и HTTP-запросы не блокируются
         self.registry.start_background_connect()
 
-        # Create activity callback that updates GUI tray status
+        # Callback активности: обновляет время последнего запроса в трее.
+        # Вызывается из рабочего потока сервера, поэтому не используем
+        # Tk-методы (after) — update_tray_status трогает только иконку трея.
         activity_callback = None
         if self._gui_reference:
             def callback():
                 try:
-                    self._gui_reference.after(0, self._gui_reference.update_tray_status)
+                    self._gui_reference.update_tray_status()
                 except Exception:
                     pass  # GUI may not be ready
             activity_callback = callback
