@@ -18,6 +18,10 @@ os.environ.setdefault('PGCLIENTENCODING', 'UTF8')
 # Таймаут подключения к БД (секунды) — чтобы GUI не зависал на недоступном хосте
 CONNECT_TIMEOUT = 10
 
+# Пауза перед повторной попыткой подключения после неудачи (секунды).
+# Без неё каждый запрос к недоступной БД тратил бы 2 × CONNECT_TIMEOUT.
+RECONNECT_COOLDOWN = 30.0
+
 # Имя приложения в pg_stat_activity — чтобы соединения было видно в списке на стороне БД
 APPLICATION_NAME = "ApiPostgresConnector"
 
@@ -220,6 +224,8 @@ class Database:
         self._cache_lock = threading.Lock()
         self._tables_cache: Optional[List[str]] = None
         self._tables_cache_at: float = 0.0
+        self._last_connect_attempt: Optional[float] = None
+        self._connect_failed = False
         self._connect()
 
     def connect_from_dsn(self, dsn_string: str) -> bool:
@@ -253,6 +259,7 @@ class Database:
         user = self.config.get("user", "postgres")
         
         logger.info(f"Connecting to PostgreSQL: {host}:{port}/{database} as {user}")
+        self._last_connect_attempt = time.monotonic()
         
         try:
             self.connection = psycopg2.connect(
@@ -265,12 +272,14 @@ class Database:
                 application_name=APPLICATION_NAME,
                 cursor_factory=RealDictCursor
             )
+            self._connect_failed = False
             self._clear_error()
             logger.info("Database connection established")
         except UnicodeDecodeError as e:
             # This can happen on Windows with non-UTF8 locale (e.g., Russian_Russia.1251)
             error = describe_db_error(e)
             self._record_error(error)
+            self._connect_failed = True
             logger.error(f"Database connection failed [{error['kind']}]: {error['message']} "
                          f"— {error['user_hint']}")
             logger.error("This may be caused by encoding mismatch. "
@@ -280,10 +289,31 @@ class Database:
         except psycopg2.Error as e:
             error = describe_db_error(e)
             self._record_error(error)
+            self._connect_failed = True
             logger.error(f"Database connection failed [{error['kind']}]: {error['message']} "
                          f"— {error['user_hint']}")
             logger.debug(f"Connection error details: {error}")
             self.connection = None
+
+    def should_retry_connect(self, cooldown: float = RECONNECT_COOLDOWN) -> bool:
+        """Стоит ли повторно пытаться подключиться.
+
+        После неудачной попытки даётся пауза (RECONNECT_COOLDOWN), иначе каждый
+        запрос к недоступной БД тратил бы время на повторное подключение.
+
+        Args:
+            cooldown: Пауза между попытками в секундах
+
+        Returns:
+            bool: True если можно пробовать подключиться снова
+        """
+        if not self._connect_failed:
+            return True
+        
+        if self._last_connect_attempt is None:
+            return True
+        
+        return (time.monotonic() - self._last_connect_attempt) >= cooldown
 
     def is_connected(self) -> bool:
         """Проверяет наличие живого соединения (без round-trip до сервера).
@@ -360,6 +390,9 @@ class Database:
         """
         for attempt in (1, 2):
             if self.connection is None:
+                if not self.should_retry_connect():
+                    logger.warning("Skipping query: last connection attempt failed recently")
+                    return None
                 self.reconnect()
             
             try:

@@ -145,6 +145,13 @@ def _ensure_db_connection(profile) -> bool:
     
     # Check if connected
     if not db.is_connected():
+        # Недавно была неудачная попытка — не тратим время на новую
+        if not db.should_retry_connect():
+            logger.warning(
+                f"Database for connection '{profile.name}' is unavailable "
+                f"(previous attempt failed recently), skipping reconnect")
+            return False
+        
         logger.warning(f"Database connection lost for connection '{profile.name}', attempting to reconnect...")
         db.reconnect()
         

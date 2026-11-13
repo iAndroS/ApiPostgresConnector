@@ -215,6 +215,24 @@ class TestDatabase:
         
         assert db.table_exists('users') is True
     
+    def test_should_retry_connect_respects_cooldown(self):
+        """После неудачного подключения повтор не делается раньше времени."""
+        import time
+        
+        db, mock_conn, mock_cursor = make_connected_db()
+        
+        # Соединение живое — повторять можно всегда
+        assert db.should_retry_connect() is True
+        
+        # Недавняя неудача — ждём cooldown
+        db._connect_failed = True
+        db._last_connect_attempt = time.monotonic()
+        assert db.should_retry_connect() is False
+        
+        # Cooldown истёк — можно пробовать снова
+        db._last_connect_attempt = time.monotonic() - 1000
+        assert db.should_retry_connect() is True
+    
     def test_connect_from_dsn(self):
         """Test connect_from_dsn method."""
         with patch('src.api.database.parse_dsn') as mock_parse, \
