@@ -127,22 +127,32 @@ class TestTryPage:
 
     def test_try_request_endpoint_executes_request(self):
         """Прокси-эндпоинт выполняет запрос к API и возвращает результат."""
+        import socket
+
         from src.app import APIServer
 
+        # Прокси ходит на реальный сокет сервера — сервер должен быть запущен
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
         server = APIServer()
-        app = server._create_app("127.0.0.1", 5058)
+        assert server.start(host="127.0.0.1", port=port) is True
 
-        with app.test_client() as test_client:
-            response = test_client.post('/try/request', json={
-                "path": "/api/v1/c/main/health",
-                "method": "GET",
-                "body": ""
-            })
+        try:
+            with server.app.test_client() as test_client:
+                response = test_client.post('/try/request', json={
+                    "path": "/api/v1/c/main/health",
+                    "method": "GET",
+                    "body": ""
+                })
 
-            assert response.status_code == 200
-            data = response.get_json()
-            assert "status" in data
-            assert "data" in data
+                assert response.status_code == 200
+                data = response.get_json()
+                assert "status" in data
+                assert "data" in data
+        finally:
+            server.stop()
 
     def test_try_request_rejects_non_api_path(self):
         """Прокси-эндпоинт принимает только пути /api/..."""

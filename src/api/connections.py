@@ -5,9 +5,15 @@
 """
 import logging
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 from .database import Database
+
+logger = logging.getLogger(__name__)
+
+# Как часто watchdog проверяет недоступные подключения (секунды)
+WATCHDOG_INTERVAL = 30.0
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +106,7 @@ class ConnectionRegistry:
     def __init__(self, config: Any = None):
         self._lock = threading.RLock()
         self._profiles: Dict[str, ConnectionProfile] = {}
+        self._watchdog_thread: Optional[threading.Thread] = None
         
         # Требуется ли API-ключ для запросов (общий переключатель приложения)
         self.require_auth = True
@@ -201,4 +208,46 @@ class ConnectionRegistry:
         thread = threading.Thread(target=worker, daemon=True, name="db-background-connect")
         thread.start()
         
+        self._start_watchdog()
+        
         return thread
+    
+    def _start_watchdog(self):
+        """Запускает фоновый поток: сам переподключает недоступные БД.
+
+        Клиенту не нужно ждать и повторять запросы — соединение восстанавливается
+        автоматически, а запросы в это время быстро отвечают 503.
+        """
+        if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
+            return
+        
+        def watcher():
+            while True:
+                time.sleep(WATCHDOG_INTERVAL)
+                
+                try:
+                    with self._lock:
+                        profiles = list(self._profiles.values())
+                except Exception:
+                    continue
+                
+                for profile in profiles:
+                    if not profile.enabled or not profile.is_db_created:
+                        continue
+                    
+                    db = profile.db
+                    
+                    if db.is_connected() or db.is_connecting():
+                        continue
+                    
+                    if not db.should_retry_connect():
+                        continue
+                    
+                    try:
+                        logger.info(f"Watchdog: reconnecting '{profile.name}'")
+                        db.reconnect()
+                    except Exception as e:
+                        logger.debug(f"Watchdog reconnect failed for '{profile.name}': {e}")
+        
+        self._watchdog_thread = threading.Thread(target=watcher, daemon=True, name="db-watchdog")
+        self._watchdog_thread.start()

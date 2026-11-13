@@ -379,6 +379,68 @@ class TestApiRoutes:
         assert 'different columns' in response.get_json()['error']
 
 
+class TestNonBlockingRequests:
+    """Запросы не должны ждать сеть: подключение к БД — в фоне."""
+
+    def test_request_without_db_object_returns_503_fast(self, registry, client):
+        """Без созданного подключения — 503, а не зависание на connect."""
+        registry.get("main")._db = None
+        
+        response = client.get(
+            '/api/v1/c/main/tables',
+            headers={'X-API-Key': 'key-main'}
+        )
+        
+        assert response.status_code == 503
+        assert 'established' in response.get_json()['error']
+    
+    def test_reconnect_goes_to_background(self, registry, client):
+        """Потерянное соединение переподключается в фоне, запрос сразу получает 503."""
+        db = registry.get("main").db
+        db.is_connected.return_value = False
+        db.is_connecting.return_value = False
+        db.should_retry_connect.return_value = True
+        
+        response = client.get(
+            '/api/v1/c/main/tables',
+            headers={'X-API-Key': 'key-main'}
+        )
+        
+        assert response.status_code == 503
+        db.reconnect_async.assert_called_once()
+        db.reconnect.assert_not_called()
+    
+    def test_connect_in_progress_returns_503_fast(self, registry, client):
+        """Пока идёт подключение — 503 без ожидания и без второй попытки."""
+        db = registry.get("main").db
+        db.is_connected.return_value = False
+        db.is_connecting.return_value = True
+        
+        response = client.get(
+            '/api/v1/c/main/tables',
+            headers={'X-API-Key': 'key-main'}
+        )
+        
+        assert response.status_code == 503
+        db.reconnect_async.assert_not_called()
+        db.reconnect.assert_not_called()
+    
+    def test_recent_failure_does_not_reconnect(self, registry, client):
+        """После неудачной попытки — 503 без нового подключения (кулдаун)."""
+        db = registry.get("main").db
+        db.is_connected.return_value = False
+        db.is_connecting.return_value = False
+        db.should_retry_connect.return_value = False
+        
+        response = client.get(
+            '/api/v1/c/main/tables',
+            headers={'X-API-Key': 'key-main'}
+        )
+        
+        assert response.status_code == 503
+        db.reconnect_async.assert_not_called()
+
+
 class TestRequireApiKey:
     """Tests for require_api_key decorator."""
     

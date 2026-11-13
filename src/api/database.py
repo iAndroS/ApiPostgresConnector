@@ -226,6 +226,10 @@ class Database:
         self._tables_cache_at: float = 0.0
         self._last_connect_attempt: Optional[float] = None
         self._connect_failed = False
+        # Подключения не должны идти параллельно: иначе запросы висят
+        # на собственном подключении и дублируют попытки
+        self._connect_lock = threading.RLock()
+        self._connecting = False
         self._connect()
 
     def connect_from_dsn(self, dsn_string: str) -> bool:
@@ -253,6 +257,24 @@ class Database:
 
     def _connect(self):
         """Establish database connection."""
+        # Подключение уже идёт — дожидаемся его и не начинаем второе
+        with self._connect_lock:
+            if self.is_connected():
+                return
+            
+            # Недавняя неудачная попытка — не тратим время на новую
+            if self._connect_failed and not self.should_retry_connect():
+                return
+            
+            self._connecting = True
+            
+            try:
+                self._connect_inner()
+            finally:
+                self._connecting = False
+    
+    def _connect_inner(self):
+        """Выполняет попытку подключения к PostgreSQL."""
         host = self.config.get("host", "localhost")
         port = self.config.get("port", 5432)
         database = self.config.get("database", "mydb")
@@ -272,6 +294,11 @@ class Database:
                 application_name=APPLICATION_NAME,
                 cursor_factory=RealDictCursor
             )
+            
+            # autocommit: каждая команда сразу фиксируется. Без этого ошибка
+            # внутри явной транзакции «залипает» на ~20 с — сервер обрывает
+            # сессию, клиент получает OperationalError вместо нормальной ошибки.
+            self.connection.autocommit = True
             self._connect_failed = False
             self._clear_error()
             logger.info("Database connection established")
@@ -329,15 +356,40 @@ class Database:
         except Exception:
             return False
 
+    def is_connecting(self) -> bool:
+        """True если прямо сейчас идёт попытка подключения."""
+        return self._connecting
+    
     def reconnect(self):
         """Reconnect to database."""
-        if self.connection:
+        with self._connect_lock:
+            if self.connection:
+                try:
+                    self.connection.close()
+                except Exception:
+                    pass
+            self._invalidate_tables_cache()
+            self._connect()
+    
+    def reconnect_async(self) -> bool:
+        """Запускает переподключение в фоне — запрос не ждёт сеть.
+        
+        Returns:
+            bool: True если фоновое переподключение запущено
+        """
+        if self._connecting:
+            return False
+        
+        def worker():
             try:
-                self.connection.close()
-            except Exception:
-                pass
-        self._invalidate_tables_cache()
-        self._connect()
+                self.reconnect()
+            except Exception as e:
+                logger.debug(f"Background reconnect failed: {e}")
+        
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        
+        return True
 
     # ------------------------------------------------------------------
     # Ошибки

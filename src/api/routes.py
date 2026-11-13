@@ -141,13 +141,16 @@ def _is_public_endpoint() -> bool:
 
 
 def _ensure_db_connection(profile) -> bool:
-    """Ensure database connection is active, reconnect if needed.
+    """Проверяет состояние соединения с БД, при необходимости запускает переподключение.
+
+    Запрос никогда не ждёт сеть: переподключение уходит в фоновый поток,
+    клиенту сразу возвращается 503 с причиной.
 
     Args:
         profile: Профиль подключения
 
     Returns:
-        bool: True если connected, False otherwise
+        bool: True если соединение живое, False otherwise
     """
     if profile is None:
         return False
@@ -155,31 +158,27 @@ def _ensure_db_connection(profile) -> bool:
     db = profile.db
     
     # Check if connected
-    if not db.is_connected():
-        # Недавно была неудачная попытка — не тратим время на новую
-        if not db.should_retry_connect():
-            logger.warning(
-                f"Database for connection '{profile.name}' is unavailable "
-                f"(previous attempt failed recently), skipping reconnect")
-            return False
-        
-        logger.warning(f"Database connection lost for connection '{profile.name}', attempting to reconnect...")
-        db.reconnect()
-        
-        if not db.is_connected():
-            error = profile.last_error or {}
-            details = ""
-            if error.get("message"):
-                details = f": {error['message']}"
-            if error.get("user_hint"):
-                details += f" — {error['user_hint']}"
-            logger.error(f"Failed to reconnect to database for connection "
-                         f"'{profile.name}'{details}")
-            return False
-        
-        logger.info(f"Database reconnected successfully for connection '{profile.name}'")
+    if db.is_connected():
+        return True
     
-    return True
+    # Подключение уже идёт — не дублируем попытку и не ждём
+    if db.is_connecting():
+        logger.debug(
+            f"Database connection for '{profile.name}' is in progress, skipping reconnect")
+        return False
+    
+    # Недавно была неудачная попытка — не тратим время на новую
+    if not db.should_retry_connect():
+        logger.warning(
+            f"Database for connection '{profile.name}' is unavailable "
+            f"(previous attempt failed recently), skipping reconnect")
+        return False
+    
+    logger.warning(f"Database connection lost for connection '{profile.name}', "
+                   f"reconnecting in background")
+    db.reconnect_async()
+    
+    return False
 
 
 def _notify_activity():
@@ -283,6 +282,17 @@ def check_auth_and_connection():
         return jsonify({"error": error, "connection": profile.name}), 401
     
     # 2. Проверка подключения к БД
+    # Объект подключения создаётся фоновым потоком: если его ещё нет —
+    # не создаём его здесь, иначе запрос зависнет на сетевом подключении
+    if not profile.is_db_created:
+        return jsonify({
+            "error": "Database connection is being established (right after startup). "
+                     "Retry in a moment.",
+            "database_connected": False,
+            "connection": profile.name,
+            "reason": _error_payload(profile)
+        }), 503
+    
     g.db = profile.db
     if not _ensure_db_connection(profile):
         return jsonify({

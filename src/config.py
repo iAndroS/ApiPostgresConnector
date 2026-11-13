@@ -8,6 +8,7 @@ import os
 import platform
 import secrets
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -573,6 +574,97 @@ class Config:
         connection["api_keys"] = [key] if key else []
         
         return key
+    
+    # ------------------------------------------------------------------
+    # Экспорт / импорт подключений
+    # ------------------------------------------------------------------
+    
+    def export_connections(self, file_path: str) -> int:
+        """Экспортирует настройки подключений в JSON-файл.
+        
+        Внимание: пароли сохраняются в файле открытым текстом.
+        
+        Args:
+            file_path: Путь к файлу
+            
+        Returns:
+            int: Количество экспортированных подключений
+        """
+        data = {
+            "version": 1,
+            "exported_at": datetime.now().isoformat(timespec="seconds"),
+            "connections": [
+                {
+                    "name": connection.get("name", ""),
+                    "database": dict(connection.get("database", {})),
+                    "api_keys": list(connection.get("api_keys", [])),
+                    "enabled": bool(connection.get("enabled", True)),
+                }
+                for connection in self.connections
+            ]
+        }
+        
+        with open(file_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+        
+        return len(data["connections"])
+    
+    def import_connections(self, file_path: str) -> Dict[str, List[str]]:
+        """Импортирует настройки подключений из JSON-файла.
+        
+        Существующие подключения с тем же именем обновляются, новые — добавляются.
+        
+        Args:
+            file_path: Путь к файлу
+            
+        Returns:
+            dict: {"added": [...], "updated": [...], "skipped": [...]}
+            
+        Raises:
+            ValueError: если файл повреждён или не содержит подключений
+        """
+        with open(file_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        
+        if isinstance(data, dict):
+            items = data.get("connections")
+        else:
+            items = data
+        
+        if not isinstance(items, list):
+            raise ValueError("Файл не содержит список подключений")
+        
+        # Без свойства connections: оно дописывает подключение по умолчанию
+        existing = {c.get("name"): c for c in self._config.get("connections", [])}
+        added: List[str] = []
+        updated: List[str] = []
+        skipped: List[str] = []
+        
+        for item in items:
+            if not isinstance(item, dict):
+                skipped.append("запись не является объектом")
+                continue
+            
+            name = (item.get("name") or "").strip()
+            
+            if not name:
+                skipped.append("запись без имени")
+                continue
+            
+            database = dict(item.get("database") or {})
+            api_keys = list(item.get("api_keys") or [])
+            enabled = bool(item.get("enabled", True))
+            
+            if name in existing:
+                existing[name].setdefault("database", {}).update(database)
+                existing[name]["api_keys"] = api_keys
+                existing[name]["enabled"] = enabled
+                updated.append(name)
+            else:
+                self.add_connection(name, database=database, api_keys=api_keys, enabled=enabled)
+                added.append(name)
+        
+        return {"added": added, "updated": updated, "skipped": skipped}
     
     def update_database(self, **kwargs):
         """Update database configuration of the first connection."""

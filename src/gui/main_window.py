@@ -201,6 +201,11 @@ class MainWindow(ctk.CTk):
         ctk.CTkButton(buttons_frame, text="Удалить", width=65,
                       command=self._remove_connection).pack(side="left", padx=2)
 
+        ctk.CTkButton(buttons_frame, text="Экспорт", width=70,
+                      command=self._export_connections).pack(side="left", padx=8)
+        ctk.CTkButton(buttons_frame, text="Импорт", width=70,
+                      command=self._import_connections).pack(side="left", padx=2)
+
         # --- Статус (виден всегда, независимо от формы параметров) ---
         self.lbl_connection_status = ctk.CTkLabel(container, text="", anchor="w")
         self.lbl_connection_status.pack(fill="x", padx=4, pady=(2, 0))
@@ -703,6 +708,75 @@ class MainWindow(ctk.CTk):
         self._reload_runtime_config()
         self.lbl_connection_status.configure(
             text=f"Создана копия '{new_name}'", text_color="green")
+    
+    def _export_connections(self):
+        """Экспортирует настройки подключений в JSON-файл."""
+        from tkinter import filedialog
+        
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Экспорт настроек подключений",
+            defaultextension=".json",
+            filetypes=[("JSON файлы", "*.json"), ("Все файлы", "*.*")],
+            initialfile="connections.json"
+        )
+        
+        if not path:
+            return
+        
+        try:
+            count = config.export_connections(path)
+        except OSError as e:
+            self.lbl_connection_status.configure(
+                text=f"Ошибка: не удалось сохранить файл: {e}", text_color="red")
+            return
+        
+        self.lbl_connection_status.configure(
+            text=f"Экспортировано подключений: {count} → {path}", text_color="green")
+    
+    def _import_connections(self):
+        """Импортирует настройки подключений из JSON-файла."""
+        from tkinter import filedialog
+        
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Импорт настроек подключений",
+            filetypes=[("JSON файлы", "*.json"), ("Все файлы", "*.*")]
+        )
+        
+        if not path:
+            return
+        
+        try:
+            result = config.import_connections(path)
+        except (OSError, ValueError) as e:
+            self.lbl_connection_status.configure(
+                text=f"Ошибка: не удалось импортировать: {e}", text_color="red")
+            return
+        
+        try:
+            config.save()
+        except OSError as e:
+            self.lbl_connection_status.configure(
+                text=f"Ошибка: не удалось сохранить настройки: {e}", text_color="red")
+            return
+        
+        self._reload_runtime_config()
+        self._refresh_connections_table()
+        
+        parts = []
+        if result["added"]:
+            parts.append(f"добавлено: {', '.join(result['added'])}")
+        if result["updated"]:
+            parts.append(f"обновлено: {', '.join(result['updated'])}")
+        if result["skipped"]:
+            parts.append(f"пропущено: {len(result['skipped'])}")
+        
+        text = "Импорт завершён"
+        if parts:
+            text += " — " + "; ".join(parts)
+        
+        self.lbl_connection_status.configure(text=text, text_color="green")
     
     def _remove_connection(self):
         """Удаляет выбранное подключение."""
