@@ -100,7 +100,6 @@ class ConnectionRegistry:
     def __init__(self, config: Any = None):
         self._lock = threading.RLock()
         self._profiles: Dict[str, ConnectionProfile] = {}
-        self._default_name = ""
         
         # Требуется ли API-ключ для запросов (общий переключатель приложения)
         self.require_auth = True
@@ -118,7 +117,6 @@ class ConnectionRegistry:
             config: Экземпляр src.config.Config
         """
         connections = list(getattr(config, "connections", []) or [])
-        default_name = getattr(config, "default_connection", "") or ""
         
         api_config = getattr(config, "api", {}) or {}
         self.require_auth = bool(api_config.get("require_auth", True))
@@ -153,10 +151,6 @@ class ConnectionRegistry:
         
         with self._lock:
             self._profiles = new_profiles
-            self._default_name = default_name if default_name in new_profiles else ""
-            
-            if not self._default_name and new_profiles:
-                self._default_name = next(iter(new_profiles))
         
         logger.info(f"Connection registry reloaded: {', '.join(self.names()) or 'empty'}")
 
@@ -164,20 +158,7 @@ class ConnectionRegistry:
         """Возвращает подключение по имени или None."""
         with self._lock:
             return self._profiles.get(name)
-
-    def get_default(self) -> Optional[ConnectionProfile]:
-        """Возвращает подключение по умолчанию."""
-        with self._lock:
-            if not self._default_name:
-                return None
-            return self._profiles.get(self._default_name)
-
-    @property
-    def default_name(self) -> str:
-        """Имя подключения по умолчанию."""
-        with self._lock:
-            return self._default_name
-
+    
     def names(self) -> List[str]:
         """Список имён подключений."""
         with self._lock:

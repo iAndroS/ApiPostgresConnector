@@ -105,8 +105,9 @@ API_DOCS_HTML = """
     <p>REST API для подключения к PostgreSQL</p>
 
     <p class="note">
-        Все эндпоинты кроме <code>/api/v1/health</code> и <code>/api/v1/info</code>
-        требуют заголовок <code>X-API-Key</code>. Браузер отправить такой заголовок не может —
+        Имя подключения указывается в URL после <code>/c/</code>. Все эндпоинты кроме
+        <code>health</code> и <code>info</code> требуют заголовок <code>X-API-Key</code>
+        именно этого подключения. Браузер отправить такой заголовок не может —
         используйте curl, Postman или Python.
     </p>
 
@@ -114,56 +115,56 @@ API_DOCS_HTML = """
 
     <div class="endpoint">
         <span class="method get">GET</span>
-        <code>/api/v1/health</code>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/health</code>
         <p>Проверка состояния API и подключения к БД</p>
     </div>
 
     <div class="endpoint">
         <span class="method get">GET</span>
-        <code>/api/v1/info</code>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/info</code>
         <p>Информация об API (auth_required, количество ключей)</p>
     </div>
 
     <div class="endpoint">
         <span class="method get">GET</span>
-        <code>/api/v1/tables</code>
-        <p>Список всех таблиц в подключении по умолчанию</p>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/tables</code>
+        <p>Список всех таблиц в подключении</p>
     </div>
 
     <div class="endpoint">
         <span class="method get">GET</span>
-        <code>/api/v1/tables/&lt;table_name&gt;/columns</code>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/tables/&lt;table_name&gt;/columns</code>
         <p>Колонки указанной таблицы</p>
     </div>
 
     <div class="endpoint">
         <span class="method get">GET</span>
-        <code>/api/v1/tables/&lt;table_name&gt;/select?limit=100&amp;offset=0</code>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/tables/&lt;table_name&gt;/select?limit=100&amp;offset=0</code>
         <p>Выбрать данные из таблицы</p>
     </div>
 
     <div class="endpoint">
         <span class="method post">POST</span>
-        <code>/api/v1/tables/&lt;table_name&gt;/insert</code>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/tables/&lt;table_name&gt;/insert</code>
         <p>Вставить одну запись в таблицу (JSON объект в теле запроса)</p>
     </div>
 
     <div class="endpoint">
         <span class="method post">POST</span>
-        <code>/api/v1/tables/&lt;table_name&gt;/batch-insert</code>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/tables/&lt;table_name&gt;/batch-insert</code>
         <p>Массовая вставка записей (JSON массив объектов, максимум 1000)</p>
     </div>
 
     <div class="endpoint">
         <span class="method post">POST</span>
-        <code>/api/v1/query</code>
+        <code>/api/v1/c/&lt;имя_подключения&gt;/query</code>
         <p>Выполнить произвольный SQL запрос (только SELECT)</p>
     </div>
 
     <h2>🔀 Несколько подключений</h2>
 
     <p>
-        У каждого подключения своя база данных и свои API-ключи. Имя подключения
+        У каждого подключения своя база данных и свой API-ключ. Имя подключения
         указывается в URL после <code>/c/</code>:
     </p>
 
@@ -176,14 +177,11 @@ POST /api/v1/c/&lt;имя_подключения&gt;/query</code></pre>
     <h2>📖 Примеры использования</h2>
 
     <h3>curl</h3>
-    <pre><code># Список таблиц (подключение по умолчанию)
-curl -H "X-API-Key: your-api-key" http://127.0.0.1:5000/api/v1/tables
-
-# Список таблиц именованного подключения
+    <pre><code># Список таблиц подключения crm
 curl -H "X-API-Key: your-api-key" http://127.0.0.1:5000/api/v1/c/crm/tables
 
 # SELECT
-curl -H "X-API-Key: your-api-key" \\
+curl -H "X-API-Key: your-api-key" \
      "http://127.0.0.1:5000/api/v1/c/crm/tables/users/select?limit=10"</code></pre>
 
     <h3>Python</h3>
@@ -193,16 +191,13 @@ BASE = "http://127.0.0.1:5000/api/v1"
 HEADERS = {"X-API-Key": "your-api-key"}
 
 # Проверка здоровья API (без ключа)
-print(requests.get(f"{BASE}/health").json())
+print(requests.get(f"{BASE}/c/crm/health").json())
 
-# Таблицы подключения по умолчанию
-tables = requests.get(f"{BASE}/tables", headers=HEADERS).json()
-
-# Таблицы именованного подключения
+# Таблицы подключения
 tables = requests.get(f"{BASE}/c/crm/tables", headers=HEADERS).json()</code></pre>
 
     <h3>PowerShell</h3>
-    <pre><code>Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/v1/tables" `
+    <pre><code>Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/v1/c/crm/tables" `
     -Headers @{ "X-API-Key" = "your-api-key" }</code></pre>
 
     <footer>
@@ -309,6 +304,17 @@ TRY_PAGE_HTML = """
 """
 
 
+def _default_api_path() -> str:
+    """Путь API по умолчанию для страницы-«пробника» — health первого подключения."""
+    from urllib.parse import quote
+
+    names = config.get_connection_names()
+    if not names:
+        return "/api/v1/health"
+
+    return f"/api/v1/c/{quote(names[0])}/health"
+
+
 def _api_key_for_path(path: str) -> str:
     """Возвращает API-ключ для подключения, указанного в пути.
 
@@ -326,9 +332,6 @@ def _api_key_for_path(path: str) -> str:
     
     if match:
         connection = config.get_connection(unquote(match.group(1)))
-    
-    if not connection:
-        connection = config.get_connection(config.default_connection)
     
     if not connection:
         return ""
@@ -423,10 +426,10 @@ class APIServer:
             from flask import request
             from urllib.parse import unquote
 
-            path = unquote(request.args.get("path", "/api/v1/health"))
+            path = unquote(request.args.get("path") or _default_api_path())
             
             if not path.startswith("/api/"):
-                path = "/api/v1/health"
+                path = _default_api_path()
             
             api_key = _api_key_for_path(path)
             
@@ -506,11 +509,16 @@ def main():
     """Main application entry point."""
     logger.info("Starting ApiPostgresConnector...")
 
-    # Гарантируем наличие API-ключа (до создания GUI — чтобы ключ был виден во вкладке «Подключения»)
-    try:
-        config.ensure_api_key(config.default_connection)
-    except Exception as e:
-        logger.warning(f"Failed to ensure API key: {e}")
+    # Гарантируем наличие API-ключа у каждого подключения
+    # (до создания GUI — чтобы ключ был виден во вкладке «Подключения»)
+    for connection in list(config.connections):
+        name = connection.get("name")
+        if not name:
+            continue
+        try:
+            config.ensure_api_key(name)
+        except Exception as e:
+            logger.warning(f"Failed to ensure API key for '{name}': {e}")
 
     # Create GUI first (we need it for activity callback)
     gui = MainWindow(api_server=None)

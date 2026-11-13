@@ -87,7 +87,13 @@ def require_api_key(f):
     """Decorator to require API key authentication."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        profile = g.get("connection") or (_registry.get_default() if _registry else None)
+        profile = g.get("connection")
+        
+        if profile is None:
+            name = (request.view_args or {}).get("connection_name")
+            if _registry and name:
+                profile = _registry.get(name)
+        
         ok, error = _check_api_key(profile)
         if not ok:
             return jsonify({"error": error}), 401
@@ -113,6 +119,8 @@ def validate_identifier(name: str) -> bool:
 def _resolve_connection():
     """Определяет подключение для текущего запроса.
 
+    Имя подключения обязательно: запрос без него не обслуживается.
+
     Returns:
         ConnectionProfile или None
     """
@@ -121,16 +129,14 @@ def _resolve_connection():
     
     name = (request.view_args or {}).get("connection_name")
     
-    if name:
-        return _registry.get(name)
+    if not name:
+        return None
     
-    return _registry.get_default()
+    return _registry.get(name)
 
 
 def _is_public_endpoint() -> bool:
-    """True для эндпоинтов без аутентификации (/health, /info без имени подключения)."""
-    if (request.view_args or {}).get("connection_name"):
-        return False
+    """True для эндпоинтов без аутентификации (/health, /info)."""
     return request.endpoint in ('api.health_check', 'api.api_info')
 
 
@@ -243,6 +249,12 @@ def check_auth_and_connection():
         return jsonify({"error": "API not initialized"}), 500
     
     name = (request.view_args or {}).get("connection_name")
+    
+    if not name:
+        return jsonify({
+            "error": "Укажите подключение в URL: /api/v1/c/<имя подключения>/...",
+        }), 404
+    
     profile = _resolve_connection()
     
     if profile is None:
@@ -283,9 +295,23 @@ def check_auth_and_connection():
 
 
 @api_bp.route("/health", methods=["GET"])
+@api_bp.route("/info", methods=["GET"])
+@api_bp.route("/tables", methods=["GET"])
+@api_bp.route("/tables/<table_name>/columns", methods=["GET"])
+@api_bp.route("/tables/<table_name>/select", methods=["GET"])
+@api_bp.route("/tables/<table_name>/insert", methods=["POST"])
+@api_bp.route("/tables/<table_name>/batch-insert", methods=["POST"])
+@api_bp.route("/query", methods=["POST"])
+def connection_required(**kwargs):
+    """Запрос без имени подключения не обслуживается."""
+    return jsonify({
+        "error": "Укажите подключение в URL: /api/v1/c/<имя подключения>/...",
+    }), 404
+
+
 @api_bp.route("/c/<connection_name>/health", methods=["GET"])
 def health_check(connection_name=None):
-    """Health check endpoint (no auth required for the default connection)."""
+    """Health check endpoint (no auth required)."""
     profile = g.get("connection")
     db = g.get("db")
     
@@ -306,10 +332,9 @@ def health_check(connection_name=None):
     return jsonify(payload)
 
 
-@api_bp.route("/info", methods=["GET"])
 @api_bp.route("/c/<connection_name>/info", methods=["GET"])
 def api_info(connection_name=None):
-    """API information endpoint (no auth required for the default connection)."""
+    """API information endpoint (no auth required)."""
     profile = g.get("connection")
     db = g.get("db")
     
@@ -324,16 +349,15 @@ def api_info(connection_name=None):
         "database_connected": db.is_connected() if db else False,
         "connection": profile.name if profile else None,
         "endpoints": [
-            "/api/v1/health",
-            "/api/v1/info",
-            "/api/v1/tables",
-            "/api/v1/tables/<name>/columns",
-            "/api/v1/query",
-            "/api/v1/tables/<name>/select",
-            "/api/v1/tables/<name>/insert",
-            "/api/v1/tables/<name>/batch-insert"
+            "/api/v1/c/<connection>/health",
+            "/api/v1/c/<connection>/info",
+            "/api/v1/c/<connection>/tables",
+            "/api/v1/c/<connection>/tables/<name>/columns",
+            "/api/v1/c/<connection>/query",
+            "/api/v1/c/<connection>/tables/<name>/select",
+            "/api/v1/c/<connection>/tables/<name>/insert",
+            "/api/v1/c/<connection>/tables/<name>/batch-insert"
         ],
-        "named_endpoints": "/api/v1/c/<connection>/<endpoint>"
     }
     
     error = profile.last_error if profile else None
@@ -343,7 +367,6 @@ def api_info(connection_name=None):
     return jsonify(payload)
 
 
-@api_bp.route("/tables", methods=["GET"])
 @api_bp.route("/c/<connection_name>/tables", methods=["GET"])
 def get_tables(connection_name=None):
     """Get list of all tables."""
@@ -356,7 +379,6 @@ def get_tables(connection_name=None):
     return jsonify({"connection": g.get("connection_name"), "tables": tables})
 
 
-@api_bp.route("/tables/<table_name>/columns", methods=["GET"])
 @api_bp.route("/c/<connection_name>/tables/<table_name>/columns", methods=["GET"])
 def get_table_columns(table_name, connection_name=None):
     """Get columns for specified table."""
@@ -373,7 +395,6 @@ def get_table_columns(table_name, connection_name=None):
     return jsonify({"connection": g.get("connection_name"), "table": table_name, "columns": columns})
 
 
-@api_bp.route("/query", methods=["POST"])
 @api_bp.route("/c/<connection_name>/query", methods=["POST"])
 def execute_query(connection_name=None):
     """Execute custom SQL query."""
@@ -403,7 +424,6 @@ def execute_query(connection_name=None):
     return jsonify({"connection": g.get("connection_name"), "result": result})
 
 
-@api_bp.route("/tables/<table_name>/select", methods=["GET"])
 @api_bp.route("/c/<connection_name>/tables/<table_name>/select", methods=["GET"])
 def select_from_table(table_name, connection_name=None):
     """Select rows from table with optional filters."""
@@ -443,7 +463,6 @@ def select_from_table(table_name, connection_name=None):
     })
 
 
-@api_bp.route("/tables/<table_name>/insert", methods=["POST"])
 @api_bp.route("/c/<connection_name>/tables/<table_name>/insert", methods=["POST"])
 def insert_into_table(table_name, connection_name=None):
     """Insert row into table."""
@@ -492,7 +511,6 @@ def insert_into_table(table_name, connection_name=None):
     }), 201
 
 
-@api_bp.route("/tables/<table_name>/batch-insert", methods=["POST"])
 @api_bp.route("/c/<connection_name>/tables/<table_name>/batch-insert", methods=["POST"])
 def batch_insert_into_table(table_name, connection_name=None):
     """Batch insert multiple rows into table.

@@ -1,4 +1,4 @@
-"""Тесты вкладки «Подключения»: единый API-ключ, статус, скрытая форма, вкл/выкл."""
+"""Тесты вкладки «Подключения»: единый API-ключ, статус, скрытая форма, иконки строк."""
 import sys
 from pathlib import Path
 
@@ -24,6 +24,15 @@ def app(isolated_config):
         window.destroy()
     except Exception:
         pass
+
+
+def _patch_clipboard(monkeypatch):
+    """Подменяет буфер обмена — список скопированных значений."""
+    import pyperclip
+
+    copied = []
+    monkeypatch.setattr(pyperclip, "copy", lambda text: copied.append(text))
+    return copied
 
 
 @pytest.fixture
@@ -54,47 +63,28 @@ class TestSingleApiKey:
         """Генерация заменяет ключ — у подключения остаётся один ключ."""
         from src.config import config
 
-        app._current_connection = "КлючиA"
-        app._update_selected_connection()
-
-        app._generate_api_key()
+        app._regenerate_connection_key("КлючиA")
 
         keys = config.get_connection("КлючиA")["api_keys"]
 
         assert len(keys) == 1
         assert keys[0] != "key-КлючиA"
 
-    def test_copy_selected_key(self, app, two_connections):
-        """Кнопка копирования копирует ключ выбранного подключения."""
-        import pyperclip
+    def test_copy_selected_key(self, app, two_connections, monkeypatch):
+        """Иконка копирования копирует ключ выбранного подключения."""
+        copied = _patch_clipboard(monkeypatch)
 
-        app._current_connection = "КлючиA"
-        app._update_selected_connection()
-        pyperclip.copy("")
+        app._copy_connection_key("КлючиA")
 
-        app._copy_api_key()
+        assert copied == ["key-КлючиA"]
 
-        assert pyperclip.paste() == "key-КлючиA"
-
-    def test_copy_key_by_row_icon(self, app, two_connections):
+    def test_copy_key_by_row_icon(self, app, two_connections, monkeypatch):
         """Клик по иконке в строке копирует ключ этого подключения."""
-        import pyperclip
-
-        pyperclip.copy("")
+        copied = _patch_clipboard(monkeypatch)
 
         app._copy_connection_key("КлючиB")
 
-        assert pyperclip.paste() == "key-КлючиB"
-
-    def test_key_label_shows_masked_key(self, app, two_connections):
-        """В подписи ключ показан в маскированном виде."""
-        app._current_connection = "КлючиA"
-        app._update_selected_connection()
-
-        text = app.lbl_selected_key.cget("text")
-
-        assert "key-КлючиA" not in text
-        assert text.startswith("Ключ: ")
+        assert copied == ["key-КлючиB"]
 
     def test_long_key_is_masked_with_ellipsis(self, app):
         """Длинный ключ показывается в виде «начало…конец»."""
@@ -110,8 +100,7 @@ class TestSingleApiKey:
         """Ключ одного подключения не действует в другом."""
         from src.config import config
 
-        app._current_connection = "КлючиA"
-        app._generate_api_key()
+        app._regenerate_connection_key("КлючиA")
 
         new_key = config.get_connection("КлючиA")["api_keys"][0]
 
@@ -120,7 +109,7 @@ class TestSingleApiKey:
 
 
 class TestConnectionsTable:
-    """Таблица подключений: строки, статус, выделение."""
+    """Таблица подключений: строки, статус, иконки."""
 
     def test_table_contains_all_connections(self, app, two_connections):
         """В таблице есть все подключения."""
@@ -139,14 +128,6 @@ class TestConnectionsTable:
         assert row["status_text"]
         assert row["has_key"] is True
 
-    def test_default_connection_is_marked(self, app, two_connections):
-        """Подключение по умолчанию помечено в таблице."""
-        from src.config import config
-
-        rows = {row["name"]: row for row in app.table_connections.get_rows()}
-
-        assert rows[config.default_connection]["is_default"] is True
-
     def test_disabled_connection_has_own_status(self, app, two_connections):
         """Отключённое подключение отмечено в статусе."""
         from src.config import config
@@ -158,8 +139,20 @@ class TestConnectionsTable:
 
         assert rows["КлючиA"]["status_text"] == "выключено"
 
-    def test_select_connection_updates_key_label(self, app, two_connections):
-        """Выбор строки показывает ключ выбранного подключения."""
+    def test_row_keeps_enabled_flag(self, app, two_connections):
+        """В строке есть признак включённого подключения (для иконки-переключателя)."""
+        from src.config import config
+
+        config.set_connection_enabled("КлючиA", False)
+        app._refresh_connections_table()
+
+        rows = {row["name"]: row for row in app.table_connections.get_rows()}
+
+        assert rows["КлючиA"]["enabled"] is False
+        assert rows["КлючиB"]["enabled"] is True
+
+    def test_select_connection_updates_selection(self, app, two_connections):
+        """Выбор строки запоминается в таблице."""
         app._on_connection_select("КлючиB")
 
         assert app._current_connection == "КлючиB"
@@ -213,38 +206,31 @@ class TestConnectionEditor:
 
 
 class TestConnectionToggle:
-    """Переключатель вкл/выкл подключения."""
-
-    def test_switch_reflects_config(self, app, two_connections):
-        """Переключатель показывает состояние подключения."""
-        from src.config import config
-
-        config.set_connection_enabled("КлючиA", False)
-        app._current_connection = "КлючиA"
-        app._update_selected_connection()
-
-        assert not app.switch_enabled.get()
-
-        config.set_connection_enabled("КлючиA", True)
-        app._update_selected_connection()
-
-        assert app.switch_enabled.get()
+    """Переключатель вкл/выкл подключения (иконка в строке)."""
 
     def test_toggle_saves_state(self, app, two_connections):
-        """Переключение сохраняется в конфиг."""
+        """Клик по иконке переключает состояние подключения."""
         from src.config import config
 
-        app._current_connection = "КлючиA"
-        app.switch_enabled.deselect()
-
-        app._on_toggle_enabled()
+        app._toggle_connection("КлючиA")
 
         assert config.is_connection_enabled("КлючиA") is False
 
-        app.switch_enabled.select()
-        app._on_toggle_enabled()
+        app._toggle_connection("КлючиA")
 
         assert config.is_connection_enabled("КлючиA") is True
+
+    def test_api_status_counts_only_enabled(self, app, two_connections):
+        """В статусе API считаются только включённые подключения."""
+        from src.config import config
+
+        config.set_connection_enabled("КлючиA", False)
+
+        total = len(config.connections)
+        enabled = len([c for c in config.connections if c.get("enabled", True)])
+        text = app._api_status_text()
+
+        assert f"{enabled} из {total}" in text
 
 
 if __name__ == "__main__":

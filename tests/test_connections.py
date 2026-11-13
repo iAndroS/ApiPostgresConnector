@@ -13,11 +13,8 @@ from src.api.connections import ConnectionRegistry, ConnectionProfile, db_signat
 class FakeConfig:
     """Минимальный конфиг для тестов реестра."""
 
-    def __init__(self, connections, default_connection=None):
+    def __init__(self, connections):
         self.connections = connections
-        self.default_connection = default_connection or (
-            connections[0]["name"] if connections else ""
-        )
 
 
 def make_connection(name, host="localhost", api_keys=None):
@@ -57,21 +54,19 @@ class TestConnectionRegistry:
 
     def test_builds_profiles(self):
         config = FakeConfig(
-            [make_connection("main", api_keys=["k1"]), make_connection("crm", api_keys=["k2"])],
-            default_connection="main"
+            [make_connection("main", api_keys=["k1"]), make_connection("crm", api_keys=["k2"])]
         )
         
         registry = ConnectionRegistry(config)
         
         assert registry.names() == ["main", "crm"]
-        assert registry.default_name == "main"
         assert registry.get("crm").api_keys == ["k2"]
-        assert registry.get_default().name == "main"
+        assert registry.get("main").name == "main"
         assert registry.get("missing") is None
         assert registry.total_key_count() == 2
 
     def test_reload_adds_connection(self):
-        config = FakeConfig([make_connection("main")], default_connection="main")
+        config = FakeConfig([make_connection("main")])
         registry = ConnectionRegistry(config)
         
         config.connections.append(make_connection("crm"))
@@ -81,8 +76,7 @@ class TestConnectionRegistry:
 
     def test_reload_removes_connection(self):
         config = FakeConfig(
-            [make_connection("main"), make_connection("crm")],
-            default_connection="main"
+            [make_connection("main"), make_connection("crm")]
         )
         registry = ConnectionRegistry(config)
         
@@ -94,7 +88,7 @@ class TestConnectionRegistry:
         assert removed.is_db_created is False
 
     def test_reload_keeps_database_when_params_unchanged(self):
-        config = FakeConfig([make_connection("main")], default_connection="main")
+        config = FakeConfig([make_connection("main")])
         registry = ConnectionRegistry(config)
         
         profile = registry.get("main")
@@ -109,7 +103,7 @@ class TestConnectionRegistry:
         assert profile.is_db_created is True
 
     def test_reload_recreates_database_when_params_changed(self):
-        config = FakeConfig([make_connection("main")], default_connection="main")
+        config = FakeConfig([make_connection("main")])
         registry = ConnectionRegistry(config)
         
         profile = registry.get("main")
@@ -123,7 +117,7 @@ class TestConnectionRegistry:
     
     def test_background_connect_creates_database(self):
         """Фоновое подключение создаёт Database — состояние становится известным."""
-        config = FakeConfig([make_connection("main")], default_connection="main")
+        config = FakeConfig([make_connection("main")])
         registry = ConnectionRegistry(config)
         
         profile = registry.get("main")
@@ -139,7 +133,7 @@ class TestConnectionRegistry:
         """Отключённое подключение не подключается к БД в фоне."""
         connection = make_connection("main")
         connection["enabled"] = False
-        config = FakeConfig([connection], default_connection="main")
+        config = FakeConfig([connection])
         registry = ConnectionRegistry(config)
         
         profile = registry.get("main")
@@ -152,7 +146,7 @@ class TestConnectionRegistry:
 
     def test_reload_updates_enabled_flag(self):
         """Включение подключения применяется при перезагрузке реестра."""
-        config = FakeConfig([make_connection("main")], default_connection="main")
+        config = FakeConfig([make_connection("main")])
         registry = ConnectionRegistry(config)
         
         profile = registry.get("main")

@@ -87,7 +87,7 @@ class TestConfig:
         assert config.api['host'] == '127.0.0.1'
         assert config.api['port'] == 5000
         assert len(config.connections) == 1
-        assert config.default_connection == 'По умолчанию'
+        assert config.get_connection_names() == ['Основное']
     
     def test_update_database(self):
         """Test updating database config of the default connection."""
@@ -146,7 +146,6 @@ class TestConfig:
                         'database': {'password': 'secret'},
                         'api_keys': []
                     }],
-                    'default_connection': 'main',
                     'api': {},
                     'gui': {},
                     'app': {}
@@ -190,7 +189,6 @@ class TestConfig:
                         'database': {'password': 'secret'},
                         'api_keys': []
                     }],
-                    'default_connection': 'main',
                     'api': {}, 'gui': {}, 'app': {}
                 }
                 
@@ -228,7 +226,7 @@ class TestConnectionsConfig:
         connection = config.connections[0]
         assert connection['database']['host'] == 'h'
         assert connection['api_keys'] == ['legacy-key']
-        assert config.default_connection == connection['name']
+        assert connection['name'] in config.get_connection_names()
         
         # Legacy-поля убраны, чтобы не дублироваться при сохранении
         assert 'database' not in config._config
@@ -264,33 +262,24 @@ class TestConnectionsConfig:
         assert config.remove_connection('crm') is True
         assert len(config.connections) == 1
         
-        assert config.remove_connection(config.default_connection) is False
-    
-    def test_set_default_connection(self):
-        """Назначение подключения по умолчанию."""
-        config = make_config()
-        config.add_connection('crm')
-        
-        config.set_default_connection('crm')
-        assert config.default_connection == 'crm'
-        
-        with pytest.raises(ValueError):
-            config.set_default_connection('nope')
+        assert config.remove_connection(config.get_connection_names()[0]) is False
     
     def test_ensure_api_key(self):
         """Ключ генерируется, если его нет, и не меняется, если есть."""
         config = make_config()
         
-        key = config.ensure_api_key(config.default_connection)
-        assert key
-        assert config.get_connection(config.default_connection)['api_keys'] == [key]
+        name = config.get_connection_names()[0]
         
-        assert config.ensure_api_key(config.default_connection) == key
+        key = config.ensure_api_key(name)
+        assert key
+        assert config.get_connection(name)['api_keys'] == [key]
+        
+        assert config.ensure_api_key(name) == key
     
     def test_set_api_key_keeps_single_key(self):
         """У подключения один API-ключ: новый заменяет прежние."""
         config = make_config()
-        name = config.default_connection
+        name = config.get_connection_names()[0]
         
         config.set_api_key(name, 'first-key')
         config.set_api_key(name, 'second-key')
@@ -300,7 +289,7 @@ class TestConnectionsConfig:
     def test_connection_enabled_flag(self):
         """Подключение можно включать и выключать."""
         config = make_config()
-        name = config.default_connection
+        name = config.get_connection_names()[0]
         
         assert config.is_connection_enabled(name) is True
         
@@ -322,7 +311,6 @@ class TestConnectionsConfig:
                 'database': {'host': 'h', 'port': 5432, 'database': 'd', 'user': 'u', 'password': 'p'},
                 'api_keys': ['k']
             }],
-            'default_connection': 'old'
         })
         
         config._normalize_connections()

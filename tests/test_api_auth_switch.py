@@ -19,7 +19,6 @@ class FakeConfig:
             "database": {"host": "localhost", "port": 5432, "database": "db", "user": "u", "password": ""},
             "api_keys": ["secret-key"]
         }]
-        self.default_connection = "main"
         self.api = {"host": "127.0.0.1", "port": 5000, "require_auth": require_auth}
 
 
@@ -56,7 +55,7 @@ class TestRequireAuthSwitch:
         """По умолчанию запрос без ключа отклоняется."""
         client, _ = client_factory(require_auth=True)
         
-        response = client.get('/api/v1/tables')
+        response = client.get('/api/v1/c/main/tables')
         
         assert response.status_code == 401
         assert 'Missing API key' in response.get_json()['error']
@@ -65,7 +64,7 @@ class TestRequireAuthSwitch:
         """С выключенной авторизацией запрос выполняется без ключа."""
         client, _ = client_factory(require_auth=False)
         
-        response = client.get('/api/v1/tables')
+        response = client.get('/api/v1/c/main/tables')
         
         assert response.status_code == 200
         assert response.get_json()['tables'] == ['users']
@@ -74,7 +73,7 @@ class TestRequireAuthSwitch:
         """/info показывает, что авторизация не требуется."""
         client, _ = client_factory(require_auth=False)
         
-        data = client.get('/api/v1/info').get_json()
+        data = client.get('/api/v1/c/main/info').get_json()
         
         assert data['auth_required'] is False
         assert data['api_key_count'] == 1
@@ -103,11 +102,11 @@ class TestTryPage:
         app = server._create_app("127.0.0.1", 5055)
         
         with app.test_client() as test_client:
-            response = test_client.get('/try?path=%2Fapi%2Fv1%2Ftables')
+            response = test_client.get('/try?path=%2Fapi%2Fv1%2Fc%2Fmain%2Ftables')
             
             assert response.status_code == 200
             body = response.get_data(as_text=True)
-            assert '/api/v1/tables' in body
+            assert '/api/v1/c/main/tables' in body
             assert 'X-API-Key' in body
 
     def test_try_page_rejects_non_api_path(self):
@@ -123,7 +122,8 @@ class TestTryPage:
             assert response.status_code == 200
             body = response.get_data(as_text=True)
             assert '/etc/passwd' not in body
-            assert '/api/v1/health' in body
+            assert '/api/v1/c/' in body
+            assert '/health' in body
 
 
 if __name__ == "__main__":

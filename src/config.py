@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 APP_DIR_NAME = "ApiPostgresConnector"
 
 # Имя подключения, создаваемого при миграции со старой (одно-подключение) схемы
-DEFAULT_CONNECTION_NAME = "По умолчанию"
+DEFAULT_CONNECTION_NAME = "Основное"
 
 # Try to import cryptography, but make it optional
 try:
@@ -169,13 +169,13 @@ class Config:
     {
         "connections": [
             {
-                "name": "По умолчанию",
+                "name": DEFAULT_CONNECTION_NAME,
                 "database": {"host": ..., "port": ..., "database": ..., "user": ..., "password": ...},
                 "api_keys": ["..."],
                 "enabled": true
             }
         ],
-        "default_connection": "По умолчанию",
+        
         "api": {"host": "127.0.0.1", "port": 5000, "debug": false},
         "gui": {...},
         "app": {...}
@@ -296,11 +296,7 @@ class Config:
     def _migrate_legacy_schema(self):
         """Переводит старую схему (database + api.api_keys) в список подключений."""
         if self._config.get("connections"):
-            # Схема уже новая — проверяем корректность имени по умолчанию
-            names = [c.get("name") for c in self._config["connections"]]
-            default = self._config.get("default_connection")
-            if default not in names:
-                self._config["default_connection"] = names[0] if names else DEFAULT_CONNECTION_NAME
+            # Схема уже новая — подключение по умолчанию больше не используется
             return
         
         legacy_database = self._config.get("database")
@@ -312,7 +308,6 @@ class Config:
                 "database": dict(legacy_database),
                 "api_keys": list(legacy_keys)
             }]
-            self._config["default_connection"] = DEFAULT_CONNECTION_NAME
             logger.info(f"Configuration migrated to multi-connection schema "
                         f"(connection '{DEFAULT_CONNECTION_NAME}')")
         
@@ -321,7 +316,9 @@ class Config:
         self._config.get("api", {}).pop("api_keys", None)
     
     def _normalize_connections(self):
-        """Дополняет подключения недостающими полями (enabled, api_keys)."""
+        """Убирает устаревшее поле default_connection и дополняет подключения."""
+        self._config.pop("default_connection", None)
+        
         for connection in self._config.get("connections", []):
             if "enabled" not in connection:
                 connection["enabled"] = True
@@ -351,7 +348,6 @@ class Config:
                     "enabled": True
                 }
             ],
-            "default_connection": DEFAULT_CONNECTION_NAME,
             "api": {
                 "host": "127.0.0.1",
                 "port": 5000,
@@ -360,8 +356,8 @@ class Config:
             },
             "gui": {
                 "theme": "dark-blue",
-                "width": 600,
-                "height": 500
+                "width": 760,
+                "height": 780
             },
             "app": {
                 "auto_start_api": True,
@@ -376,10 +372,10 @@ class Config:
     
     @property
     def database(self) -> dict:
-        """Параметры БД подключения по умолчанию (совместимость со старым кодом)."""
-        connection = self.get_connection(self.default_connection)
-        if connection:
-            return connection.get("database", {})
+        """Параметры БД первого подключения (совместимость со старым кодом)."""
+        connections = self._config.get("connections", [])
+        if connections:
+            return connections[0].get("database", {})
         return self._config.get("database", {})
     
     @property
@@ -401,19 +397,6 @@ class Config:
         if not connections:
             connections.append(self._get_default_config()["connections"][0])
         return connections
-    
-    @property
-    def default_connection(self) -> str:
-        """Имя подключения по умолчанию."""
-        names = [c.get("name") for c in self._config.get("connections", [])]
-        default = self._config.get("default_connection")
-        if default and default in names:
-            return default
-        return names[0] if names else DEFAULT_CONNECTION_NAME
-    
-    @default_connection.setter
-    def default_connection(self, name: str):
-        self.set_default_connection(name)
     
     # ------------------------------------------------------------------
     # Управление подключениями
@@ -466,9 +449,6 @@ class Config:
             "enabled": bool(enabled)
         }
         self._config.setdefault("connections", []).append(connection)
-        
-        if not self._config.get("default_connection"):
-            self._config["default_connection"] = name
         
         return connection
     
@@ -529,9 +509,6 @@ class Config:
             raise ValueError(f"Connection '{new_name}' already exists")
         
         connection["name"] = new_name
-        
-        if self._config.get("default_connection") == name:
-            self._config["default_connection"] = new_name
     
     def remove_connection(self, name: str) -> bool:
         """Удаляет подключение. Последнее удалять нельзя."""
@@ -547,16 +524,7 @@ class Config:
         
         self._config["connections"] = [c for c in connections if c.get("name") != name]
         
-        if self._config.get("default_connection") == name:
-            self._config["default_connection"] = self._config["connections"][0].get("name")
-        
         return True
-    
-    def set_default_connection(self, name: str):
-        """Назначает подключение по умолчанию."""
-        if not self.get_connection(name):
-            raise ValueError(f"Unknown connection '{name}'")
-        self._config["default_connection"] = name
     
     def ensure_api_key(self, name: str) -> str:
         """Гарантирует наличие API-ключа у подключения (генерирует при необходимости).
@@ -607,10 +575,11 @@ class Config:
         return key
     
     def update_database(self, **kwargs):
-        """Update database configuration of the default connection."""
-        connection = self.get_connection(self.default_connection)
-        if connection:
-            connection.setdefault("database", {}).update(kwargs)
+        """Update database configuration of the first connection."""
+        connections = self._config.get("connections", [])
+        
+        if connections:
+            connections[0].setdefault("database", {}).update(kwargs)
         else:
             self._config.setdefault("database", {}).update(kwargs)
     

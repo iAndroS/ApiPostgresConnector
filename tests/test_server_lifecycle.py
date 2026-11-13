@@ -13,6 +13,19 @@ import pytest
 from src.app import APIServer
 
 
+def _health_path() -> str:
+    """Путь health для первого подключения (имя кодируется)."""
+    from urllib.parse import quote
+
+    from src.config import config
+
+    names = config.get_connection_names()
+    if not names:
+        return "/api/v1/health"
+
+    return f"/api/v1/c/{quote(names[0])}/health"
+
+
 def get_free_port() -> int:
     """Возвращает свободный TCP-порт."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -32,7 +45,7 @@ class TestServerLifecycle:
         assert server.is_running() is True
         
         with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/api/v1/health", timeout=10
+            f"http://127.0.0.1:{port}{_health_path()}", timeout=10
         ) as response:
             assert response.status == 200
         

@@ -51,9 +51,9 @@ class MainWindow(ctk.CTk):
         gui_config = config.gui
         self.title(VERSION_STRING)
         
-        # Минимальный размер — чтобы вкладка «Подключения» помещалась
-        width = max(int(gui_config.get('width', 700) or 700), 700)
-        height = max(int(gui_config.get('height', 700) or 700), 700)
+        # Минимальный размер — чтобы вкладка «Подключения» помещалась вместе с формой параметров
+        width = max(int(gui_config.get('width', 760) or 760), 760)
+        height = max(int(gui_config.get('height', 780) or 780), 780)
         self.geometry(f"{width}x{height}")
         self.resizable(False, False)
 
@@ -128,7 +128,7 @@ class MainWindow(ctk.CTk):
 
     def _create_connections_tab(self):
         """Создаёт вкладку «Подключения»: таблица, панель управления, скрытая форма параметров."""
-        container = ctk.CTkScrollableFrame(self.tab_connections)
+        container = ctk.CTkFrame(self.tab_connections)
         container.pack(fill="both", expand=True, padx=6, pady=6)
 
         # --- Таблица подключений ---
@@ -137,15 +137,17 @@ class MainWindow(ctk.CTk):
             visible_rows=4,
             on_select=self._on_connection_select,
             on_copy_key=self._copy_connection_key,
+            on_regenerate_key=self._regenerate_connection_key,
+            on_toggle=self._toggle_connection,
         )
         self.table_connections.pack(fill="x", padx=4, pady=(4, 0))
 
         ctk.CTkLabel(
             container,
-            text="Иконка в колонке «Ключ» — скопировать ключ подключения",
+            text="Иконки в строке: копировать ключ · выпустить новый ключ · включить/отключить подключение",
             text_color="gray",
             anchor="w",
-            font=ctk.CTkFont(size=9)
+            font=ctk.CTkFont(size=10)
         ).pack(fill="x", padx=4)
 
         # --- Кнопки управления подключениями ---
@@ -162,31 +164,6 @@ class MainWindow(ctk.CTk):
                       command=self._duplicate_connection).pack(side="left", padx=2)
         ctk.CTkButton(buttons_frame, text="Удалить", width=65,
                       command=self._remove_connection).pack(side="left", padx=2)
-        ctk.CTkButton(buttons_frame, text="По умолчанию", width=90,
-                      command=self._set_default_connection).pack(side="left", padx=2)
-
-        # --- Выбранное подключение: вкл/выкл и API-ключ ---
-        selected_frame = ctk.CTkFrame(container, fg_color="transparent")
-        selected_frame.pack(fill="x", padx=4, pady=(2, 2))
-
-        self.switch_enabled = ctk.CTkSwitch(
-            selected_frame,
-            text="Подключение включено",
-            width=170,
-            command=self._on_toggle_enabled
-        )
-        self.switch_enabled.pack(side="left", padx=(0, 8))
-
-        self.lbl_selected_key = ctk.CTkLabel(selected_frame, text="Ключ: —", anchor="w")
-        self.lbl_selected_key.pack(side="left", padx=(0, 8))
-
-        self.btn_generate_key = ctk.CTkButton(selected_frame, text="Сгенерировать ключ", width=140,
-                                              command=self._generate_api_key)
-        self.btn_generate_key.pack(side="left", padx=2)
-
-        self.btn_copy_key = ctk.CTkButton(selected_frame, text="Копировать ключ", width=120,
-                                          command=self._copy_api_key)
-        self.btn_copy_key.pack(side="left", padx=2)
 
         # --- Статус (виден всегда, независимо от формы параметров) ---
         self.lbl_connection_status = ctk.CTkLabel(container, text="", anchor="w")
@@ -273,20 +250,18 @@ class MainWindow(ctk.CTk):
 
         self.table_connections.set_rows(self._build_connection_rows())
 
-        # При первом запуске выделяем подключение по умолчанию
+        # При первом запуске выделяем первое подключение
         if not self._current_connection:
-            default_name = config.default_connection
-            if default_name:
-                self._current_connection = default_name
+            names = config.get_connection_names()
+            if names:
+                self._current_connection = names[0]
 
         if self._current_connection:
             self.table_connections.select(self._current_connection)
-            self._update_selected_connection()
 
     def _build_connection_rows(self) -> List[dict]:
         """Собирает строки таблицы: данные подключения и состояние соединения."""
         registry = get_registry()
-        default_name = config.default_connection
         rows = []
 
         for connection in config.connections:
@@ -304,7 +279,7 @@ class MainWindow(ctk.CTk):
                 "status_color": status_color,
                 "status_text": status_text,
                 "has_key": bool(connection.get("api_keys")),
-                "is_default": name == default_name,
+                "enabled": enabled,
             })
 
         return rows
@@ -341,7 +316,6 @@ class MainWindow(ctk.CTk):
     def _on_connection_select(self, name: str):
         """Выбор подключения в таблице."""
         if name == self._current_connection:
-            self._update_selected_connection()
             return
 
         # Открытая форма — правки предыдущего подключения сохраняем
@@ -350,33 +324,40 @@ class MainWindow(ctk.CTk):
 
         self._current_connection = name
         self.table_connections.select(name)
-        self._update_selected_connection()
 
         if self._is_editor_visible():
             self._load_connection_into_editor(name)
 
-    def _update_selected_connection(self):
-        """Обновляет переключатель вкл/выкл и подпись с ключом."""
-        name = self._current_connection
-        connection = config.get_connection(name) if name else None
-
-        if not connection:
-            self.switch_enabled.deselect()
-            self.lbl_selected_key.configure(text="Ключ: —")
-            self.btn_generate_key.configure(state="disabled")
-            self.btn_copy_key.configure(state="disabled")
+    def _toggle_connection(self, name: str):
+        """Включает или отключает подключение (иконка в строке)."""
+        if not config.get_connection(name):
             return
 
-        if config.is_connection_enabled(name):
-            self.switch_enabled.select()
-        else:
-            self.switch_enabled.deselect()
+        enabled = not config.is_connection_enabled(name)
+        config.set_connection_enabled(name, enabled)
+        config.save()
+        self._reload_runtime_config()
 
-        api_keys = connection.get("api_keys") or []
-        self.lbl_selected_key.configure(text=f"Ключ: {self._mask_key(api_keys[0])}")
+        state = "включено" if enabled else "выключено"
+        self.lbl_connection_status.configure(
+            text=f"Подключение «{name}» {state}", text_color="green" if enabled else "orange")
 
-        self.btn_generate_key.configure(state="normal")
-        self.btn_copy_key.configure(state="normal" if api_keys else "disabled")
+    def _regenerate_connection_key(self, name: str):
+        """Выпускает новый API-ключ для подключения (иконка в строке)."""
+        if not config.get_connection(name):
+            return
+
+        import secrets
+
+        new_key = secrets.token_urlsafe(32)
+        config.set_api_key(name, new_key)
+        config.save()
+        self._reload_runtime_config()
+
+        self.lbl_connection_status.configure(
+            text=f"Новый ключ для подключения «{name}» создан", text_color="green")
+
+        logger.info(f"New API key generated for connection '{name}'")
 
     @staticmethod
     def _mask_key(key: str) -> str:
@@ -447,23 +428,6 @@ class MainWindow(ctk.CTk):
 
         self.lbl_connection_status.configure(
             text=f"Параметры подключения «{name}» сохранены", text_color="green")
-
-    def _on_toggle_enabled(self):
-        """Включает или отключает выбранное подключение."""
-        name = self._current_connection
-
-        if not name:
-            self.switch_enabled.deselect()
-            return
-
-        enabled = bool(self.switch_enabled.get())
-        config.set_connection_enabled(name, enabled)
-        config.save()
-        self._reload_runtime_config()
-
-        state = "включено" if enabled else "выключено"
-        self.lbl_connection_status.configure(
-            text=f"Подключение «{name}» {state}", text_color="green" if enabled else "orange")
 
     def _load_connection_into_editor(self, name: str):
         """Заполняет поля формы данными подключения."""
@@ -552,7 +516,6 @@ class MainWindow(ctk.CTk):
         config.save()
         self._current_connection = name
         self._refresh_connections_table()
-        self._update_selected_connection()
         self._reload_runtime_config()
         self._load_connection_into_editor(name)
         self._show_editor()
@@ -579,7 +542,6 @@ class MainWindow(ctk.CTk):
         self._current_connection = new_name
         config.save()
         self._refresh_connections_table()
-        self._update_selected_connection()
         self._reload_runtime_config()
         self.lbl_connection_status.configure(
             text=f"Подключение переименовано в '{new_name}'", text_color="green")
@@ -612,7 +574,6 @@ class MainWindow(ctk.CTk):
         config.save()
         self._current_connection = new_name
         self._refresh_connections_table()
-        self._update_selected_connection()
         self._reload_runtime_config()
         self.lbl_connection_status.configure(
             text=f"Создана копия '{new_name}'", text_color="green")
@@ -636,122 +597,17 @@ class MainWindow(ctk.CTk):
         self._hide_editor()
         config.save()
         self._refresh_connections_table()
-        self._update_selected_connection()
         self._reload_runtime_config()
         self.lbl_connection_status.configure(text=f"Подключение '{name}' удалено", text_color="green")
     
-    def _set_default_connection(self):
-        """Назначает выбранное подключение подключением по умолчанию."""
-        name = self._current_connection
-        if not name:
-            self.lbl_connection_status.configure(text="Внимание: не выбрано подключение", text_color="orange")
-            return
-        
-        try:
-            config.set_default_connection(name)
-        except ValueError as e:
-            self.lbl_connection_status.configure(text=f"Внимание: {e}", text_color="orange")
-            return
-        
-        config.save()
-        self._refresh_connections_table()
-        self._reload_runtime_config()
-        self.lbl_connection_status.configure(
-            text=f"Подключением по умолчанию назначено '{name}'", text_color="green")
-    
-    def _ask_confirmation(self, message: str) -> bool:
-        """Показывает диалог подтверждения."""
-        from tkinter import messagebox
-        return messagebox.askyesno("Подтверждение", message, parent=self)
-    
-    def _prompt_text(self, title: str, prompt: str, initial_value: str = "") -> Optional[str]:
-        """Модальный диалог ввода строки в стиле приложения.
-
-        Args:
-            title: Заголовок окна
-            prompt: Подпись над полем ввода
-            initial_value: Начальное значение поля
-
-        Returns:
-            Введённый текст (без пробелов по краям) или None, если ввод отменён
-        """
-        dialog = ctk.CTkToplevel(self)
-        dialog.title(title)
-        dialog.resizable(False, False)
-        dialog.transient(self)
-        
-        width, height = 420, 160
-        
-        ctk.CTkLabel(dialog, text=prompt, anchor="w", justify="left").pack(
-            fill="x", padx=20, pady=(18, 6)
-        )
-        
-        entry = ctk.CTkEntry(dialog, width=380)
-        entry.pack(fill="x", padx=20)
-        
-        if initial_value:
-            entry.insert(0, initial_value)
-            entry.select_range(0, "end")
-        
-        result = {"value": None}
-        
-        def on_ok():
-            result["value"] = entry.get().strip()
-            dialog.destroy()
-        
-        def on_cancel():
-            result["value"] = None
-            dialog.destroy()
-        
-        entry.bind("<Return>", lambda e: on_ok())
-        entry.bind("<Escape>", lambda e: on_cancel())
-        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
-        
-        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
-        buttons.pack(fill="x", padx=20, pady=14)
-        ctk.CTkButton(buttons, text="ОК", width=100, command=on_ok).pack(side="right", padx=4)
-        ctk.CTkButton(buttons, text="Отмена", width=100, command=on_cancel).pack(side="right", padx=4)
-        
-        # Вставка из буфера обмена работает и в диалоге
-        self._register_paste(entry)
-        
-        # Центрируем окно диалога над основным
-        dialog.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - width) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - height) // 2
-        dialog.geometry(f"{width}x{height}+{max(x, 0)}+{max(y, 0)}")
-        
-        dialog.grab_set()
-        entry.focus_set()
-        
-        self.wait_window(dialog)
-        
-        return result["value"]
-
-    # ------------------------------------------------------------------
-    # API-ключ подключения
-    # ------------------------------------------------------------------
-
     def _generate_api_key(self):
         """Генерирует новый API-ключ для выбранного подключения."""
-        import secrets
-        
         name = self._current_connection
         if not name:
             self.lbl_connection_status.configure(text="Внимание: не выбрано подключение", text_color="orange")
             return
         
-        new_key = secrets.token_urlsafe(32)
-        config.set_api_key(name, new_key)
-        
-        self._refresh_connections_table()
-        self._update_selected_connection()
-        self._save_and_apply()
-        
-        self.lbl_connection_status.configure(
-            text=f"Новый ключ для подключения '{name}' создан", text_color="green")
-        
-        logger.info(f"New API key generated for connection '{name}'")
+        self._regenerate_connection_key(name)
     
     def _copy_api_key(self):
         """Копирует ключ выбранного подключения в буфер обмена."""
@@ -760,14 +616,7 @@ class MainWindow(ctk.CTk):
             self.lbl_connection_status.configure(text="Внимание: не выбрано подключение", text_color="orange")
             return
         
-        connection = config.get_connection(name)
-        api_keys = (connection or {}).get("api_keys") or []
-        
-        if not api_keys:
-            self.lbl_connection_status.configure(text="Внимание: ключ подключения не задан", text_color="orange")
-            return
-        
-        self._copy_to_clipboard(api_keys[0], self.btn_copy_key, "Копировать ключ")
+        self._copy_connection_key(name)
     
     def _copy_connection_key(self, name: str):
         """Копирует ключ подключения (клик по иконке в таблице)."""
@@ -779,20 +628,18 @@ class MainWindow(ctk.CTk):
                 text=f"Внимание: ключ подключения '{name}' не задан", text_color="orange")
             return
         
-        self._copy_to_clipboard(api_keys[0], self.btn_copy_key, "Копировать ключ")
+        self._copy_to_clipboard(api_keys[0])
         
         self.lbl_connection_status.configure(
             text=f"Ключ подключения '{name}' скопирован", text_color="green")
     
-    def _copy_to_clipboard(self, text: str, button, original_text: str):
-        """Копирует текст в буфер обмена и показывает подтверждение."""
+    def _copy_to_clipboard(self, text: str):
+        """Копирует текст в буфер обмена."""
         if not pyperclip:
             return
         
         try:
             pyperclip.copy(text)
-            button.configure(text="Готово", text_color="green")
-            self.after(1500, lambda: button.configure(text=original_text, text_color="white"))
             logger.info("API key copied to clipboard")
         except Exception as e:
             logger.error(f"Failed to copy API key: {e}")
@@ -879,7 +726,7 @@ class MainWindow(ctk.CTk):
         
         ctk.CTkLabel(top_frame, text="Подключение:").grid(row=0, column=0, padx=(0, 8), sticky="w")
         
-        self.docs_connection_var = ctk.StringVar(value=config.default_connection)
+        self.docs_connection_var = ctk.StringVar(value=self._docs_connection_values()[0])
         self.docs_connection_menu = ctk.CTkOptionMenu(
             top_frame,
             values=self._docs_connection_values(),
@@ -892,7 +739,8 @@ class MainWindow(ctk.CTk):
         # Подсказка — отдельной строкой, чтобы переключатель её не перекрывал
         hint = ctk.CTkLabel(
             top_frame,
-            text="Ссылки и curl-команды собираются для выбранного подключения",
+            text="Ссылки и curl-команды собираются для выбранного подключения: "
+                 "путь /api/v1/c/<имя подключения>/...",
             text_color="gray",
             anchor="w"
         )
@@ -914,7 +762,7 @@ class MainWindow(ctk.CTk):
     def _docs_connection_values(self) -> List[str]:
         """Список подключений для переключателя в документации."""
         names = config.get_connection_names()
-        return names if names else [config.default_connection]
+        return names if names else [""]
     
     def _on_docs_connection_change(self, choice: str):
         """Переключение подключения в документации — обновляем ссылки."""
@@ -929,7 +777,7 @@ class MainWindow(ctk.CTk):
         self.docs_connection_menu.configure(values=values)
         
         if self.docs_connection_var.get() not in values:
-            self.docs_connection_var.set(config.default_connection)
+            self.docs_connection_var.set(values[0] if values else "")
     
     def _refresh_api_docs(self):
         """Перестраивает карточки эндпоинтов (актуальные хост, порт, ключ и подключение)."""
@@ -984,12 +832,9 @@ class MainWindow(ctk.CTk):
         # Аутентификация может быть отключена — тогда ключ не нужен
         require_auth = bool(config.api.get("require_auth", True))
         
-        # Для подключения по умолчанию работает короткая форма пути,
-        # для остальных — именованная (/api/v1/c/<имя>/...)
-        if selected == config.default_connection:
-            connection_part = ""
-        else:
-            connection_part = f"/c/{selected}"
+        # Все ссылки — в именованной форме (/api/v1/c/<имя>/...): в URL всегда видно,
+        # к какому подключению относится запрос. Имя кодируется — пробелы и кириллица.
+        connection_part = f"/c/{quote(selected)}"
         
         # Endpoints list: (method, path, description, requires_auth)
         # path — часть после /api/v1
@@ -1002,7 +847,6 @@ class MainWindow(ctk.CTk):
             ("POST", "/tables/{name}/insert", "Добавить одну запись в таблицу (INSERT)", True),
             ("POST", "/tables/{name}/batch-insert", "Массовая вставка записей (массив объектов)", True),
             ("POST", "/query", "Выполнить произвольный SQL запрос (SELECT)", True),
-            ("GET", "/c/{connection}/tables", "То же, но для именованного подключения", True),
         ]
         
         # Method colors
@@ -1035,11 +879,7 @@ class MainWindow(ctk.CTk):
             ).pack(anchor="w", padx=10)
             
             # Ссылка — отдельной строкой, чтобы длинный URL не выдавливал кнопки
-            if path.startswith("/c/"):
-                # Именованная форма — всегда с выбранным подключением
-                url = f"{base_url}/api/v1{path.replace('{connection}', selected)}"
-            else:
-                url = f"{base_url}/api/v1{connection_part}{path.replace('{name}', 'users')}"
+            url = f"{base_url}/api/v1{connection_part}{path.replace('{name}', 'users')}"
             
             ctk.CTkLabel(
                 endpoint_frame,
@@ -1298,6 +1138,19 @@ class MainWindow(ctk.CTk):
         )
         self.btn_toggle_api.grid(row=0, column=1, padx=10, pady=10)
 
+    def _api_status_text(self) -> str:
+        """Текст статуса API в правом верхнем углу.
+
+        Учитываются только включённые подключения: выключенные не обслуживаются API.
+        """
+        total = len(config.connections)
+        enabled = len([c for c in config.connections if c.get("enabled", True)])
+        
+        if enabled == total:
+            return f"API: Работает ({enabled} подкл.)"
+        
+        return f"API: Работает ({enabled} из {total} подкл.)"
+
     def _save_settings(self):
         """Save current settings to config file."""
         # Валидация порта API
@@ -1365,7 +1218,6 @@ class MainWindow(ctk.CTk):
             logger.info("Runtime configuration reloaded")
         
         self._refresh_connections_table()
-        self._update_selected_connection()
         self._refresh_api_docs()
     
     def _test_connection(self):
@@ -1477,8 +1329,7 @@ class MainWindow(ctk.CTk):
         """Periodically update API status."""
         if self.api_server:
             if self.api_server.is_running():
-                connections_count = len(config.connections)
-                self.status_label.configure(text=f"API: Работает ({connections_count} подкл.)")
+                self.status_label.configure(text=self._api_status_text())
                 self.btn_toggle_api.configure(text="Остановить API")
             else:
                 self.status_label.configure(text="API: Не запущен")
@@ -1557,17 +1408,18 @@ class MainWindow(ctk.CTk):
             lines = [
                 "ApiPostgresConnector",
                 f"Статус: {status}",
-                f"Подключение по умолчанию: {config.default_connection}",
+                f"Подключений: {len(config.connections)}",
                 f"Последняя активность: {time_str}"
             ]
             
             registry = get_registry()
             if registry:
-                profile = registry.get_default()
-                if profile and profile.is_db_created and not profile.db.is_connected():
-                    error = profile.last_error
-                    if error:
-                        lines.append(f"Ошибка БД: {error.get('message')}")
+                for name in registry.names():
+                    profile = registry.get(name)
+                    if profile and profile.is_db_created and not profile.db.is_connected():
+                        error = profile.last_error
+                        if error:
+                            lines.append(f"Ошибка БД ({name}): {error.get('message')}")
             
             return "\n".join(lines)
         

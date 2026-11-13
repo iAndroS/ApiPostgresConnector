@@ -20,11 +20,8 @@ from src.api.routes import (
 class FakeConfig:
     """Минимальный конфиг для тестов реестра подключений."""
 
-    def __init__(self, connections, default_connection=None):
+    def __init__(self, connections):
         self.connections = connections
-        self.default_connection = default_connection or (
-            connections[0]["name"] if connections else ""
-        )
 
     @property
     def database(self):
@@ -51,8 +48,7 @@ def make_registry():
         [
             make_connection("main", ["key-main"]),
             make_connection("other", ["key-other"], host="other-host")
-        ],
-        default_connection="main"
+        ]
     )
     
     registry = ConnectionRegistry(config)
@@ -128,7 +124,7 @@ class TestApiRoutes:
     
     def test_health_check_no_auth(self, client):
         """Health endpoint doesn't require auth."""
-        response = client.get('/api/v1/health')
+        response = client.get('/api/v1/c/main/health')
         
         assert response.status_code == 200
         data = response.get_json()
@@ -146,7 +142,7 @@ class TestApiRoutes:
         app.register_blueprint(api_bp)
         
         with app.test_client() as client:
-            response = client.get('/api/v1/health')
+            response = client.get('/api/v1/c/main/health')
             
             assert response.status_code == 200
             data = response.get_json()
@@ -166,7 +162,7 @@ class TestApiRoutes:
         
         with app.test_client() as client:
             started = time.monotonic()
-            response = client.get('/api/v1/health')
+            response = client.get('/api/v1/c/main/health')
             elapsed = time.monotonic() - started
             
             assert response.status_code == 200
@@ -196,7 +192,7 @@ class TestApiRoutes:
         app.register_blueprint(api_bp)
         
         with app.test_client() as client:
-            response = client.get('/api/v1/health')
+            response = client.get('/api/v1/c/main/health')
             
             assert response.status_code == 200
             data = response.get_json()
@@ -207,7 +203,7 @@ class TestApiRoutes:
     
     def test_api_info_no_auth(self, client):
         """Info endpoint doesn't require auth."""
-        response = client.get('/api/v1/info')
+        response = client.get('/api/v1/c/main/info')
         
         assert response.status_code == 200
         data = response.get_json()
@@ -217,14 +213,14 @@ class TestApiRoutes:
     
     def test_tables_requires_auth_with_keys(self, client):
         """Tables endpoint requires auth when keys are set."""
-        response = client.get('/api/v1/tables')
+        response = client.get('/api/v1/c/main/tables')
         
         assert response.status_code == 401
         assert 'Missing API key' in response.get_json()['error']
     
     def test_tables_with_invalid_key(self, client):
         """Tables endpoint rejects an unknown key."""
-        response = client.get('/api/v1/tables', headers={'X-API-Key': 'nope'})
+        response = client.get('/api/v1/c/main/tables', headers={'X-API-Key': 'nope'})
         
         assert response.status_code == 401
         assert 'Invalid API key' in response.get_json()['error']
@@ -232,7 +228,7 @@ class TestApiRoutes:
     def test_tables_with_valid_auth(self, client):
         """Tables endpoint works with valid auth."""
         response = client.get(
-            '/api/v1/tables',
+            '/api/v1/c/main/tables',
             headers={'X-API-Key': 'key-main'}
         )
         
@@ -284,28 +280,28 @@ class TestApiRoutes:
         assert response.status_code == 403
         assert 'disabled' in response.get_json()['error']
     
-    def test_disabled_default_connection_returns_403(self, client, registry):
-        """Отключённое подключение по умолчанию — 403 даже для /health."""
-        registry.get_default().enabled = False
+    def test_disabled_connection_health_returns_403(self, client, registry):
+        """Отключённое подключение — 403 даже для /health."""
+        registry.get("main").enabled = False
         
-        response = client.get('/api/v1/health')
+        response = client.get('/api/v1/c/main/health')
         
         assert response.status_code == 403
     
-    def test_default_connection_used_without_name(self, client):
-        """Без имени подключения используется подключение по умолчанию."""
+    def test_request_without_connection_name_returns_404(self, client):
+        """Без имени подключения запрос не обслуживается."""
         response = client.get(
             '/api/v1/tables',
             headers={'X-API-Key': 'key-main'}
         )
         
-        assert response.status_code == 200
-        assert response.get_json()['connection'] == 'main'
+        assert response.status_code == 404
+        assert 'Укажите подключение' in response.get_json()['error']
     
     def test_query_select_only(self, client):
         """Query endpoint only allows SELECT."""
         response = client.post(
-            '/api/v1/query',
+            '/api/v1/c/main/query',
             json={'query': 'SELECT * FROM users'},
             headers={'X-API-Key': 'key-main'}
         )
@@ -314,7 +310,7 @@ class TestApiRoutes:
     def test_query_block_non_select(self, client):
         """Query endpoint blocks non-SELECT queries."""
         response = client.post(
-            '/api/v1/query',
+            '/api/v1/c/main/query',
             json={'query': 'INSERT INTO users VALUES (1)'},
             headers={'X-API-Key': 'key-main'}
         )
@@ -323,7 +319,7 @@ class TestApiRoutes:
     def test_table_columns_validates_name(self, client):
         """Table columns validates identifier."""
         response = client.get(
-            '/api/v1/tables/table--name/columns',
+            '/api/v1/c/main/tables/table--name/columns',
             headers={'X-API-Key': 'key-main'}
         )
         assert response.status_code == 400
@@ -331,7 +327,7 @@ class TestApiRoutes:
     def test_insert_validates_column_names(self, client):
         """Insert validates column names."""
         response = client.post(
-            '/api/v1/tables/users/insert',
+            '/api/v1/c/main/tables/users/insert',
             json={'123name': 'value'},
             headers={'X-API-Key': 'key-main'}
         )
@@ -340,7 +336,7 @@ class TestApiRoutes:
     def test_insert_returns_inserted_row(self, client):
         """INSERT возвращает вставленную строку (регрессия: раньше был IndexError → 500)."""
         response = client.post(
-            '/api/v1/tables/users/insert',
+            '/api/v1/c/main/tables/users/insert',
             json={'name': 'test'},
             headers={'X-API-Key': 'key-main'}
         )
@@ -353,7 +349,7 @@ class TestApiRoutes:
     def test_insert_requires_object(self, client):
         """INSERT с массивом вместо объекта — 400, а не 500."""
         response = client.post(
-            '/api/v1/tables/users/insert',
+            '/api/v1/c/main/tables/users/insert',
             json=[{'name': 'test'}],
             headers={'X-API-Key': 'key-main'}
         )
@@ -362,7 +358,7 @@ class TestApiRoutes:
     def test_batch_insert_returns_rows(self, client):
         """Batch insert returns inserted rows."""
         response = client.post(
-            '/api/v1/tables/users/batch-insert',
+            '/api/v1/c/main/tables/users/batch-insert',
             json=[{'name': 'a'}, {'name': 'b'}],
             headers={'X-API-Key': 'key-main'}
         )
@@ -374,7 +370,7 @@ class TestApiRoutes:
     def test_batch_insert_rejects_different_columns(self, client):
         """Строки с разными наборами колонок — 400 (иначе данные теряются молча)."""
         response = client.post(
-            '/api/v1/tables/users/batch-insert',
+            '/api/v1/c/main/tables/users/batch-insert',
             json=[{'name': 'a'}, {'other': 'b'}],
             headers={'X-API-Key': 'key-main'}
         )
@@ -394,13 +390,13 @@ class TestRequireApiKey:
         app = Flask(__name__)
         init_routes(registry)
         
-        @app.route('/test')
+        @app.route('/test/<connection_name>')
         @require_api_key
-        def test_endpoint():
+        def test_endpoint(connection_name):
             return {'status': 'ok'}
         
         with app.test_client() as client:
-            response = client.get('/test')
+            response = client.get('/test/main')
             assert response.status_code == 401
             assert 'Missing API key' in response.get_json()['error']
     
@@ -412,13 +408,13 @@ class TestRequireApiKey:
         app = Flask(__name__)
         init_routes(registry)
         
-        @app.route('/test')
+        @app.route('/test/<connection_name>')
         @require_api_key
-        def test_endpoint():
+        def test_endpoint(connection_name):
             return {'status': 'ok'}
         
         with app.test_client() as client:
-            response = client.get('/test', headers={'X-API-Key': 'invalid-key'})
+            response = client.get('/test/main', headers={'X-API-Key': 'invalid-key'})
             assert response.status_code == 401
             assert 'Invalid API key' in response.get_json()['error']
     
@@ -430,13 +426,13 @@ class TestRequireApiKey:
         app = Flask(__name__)
         init_routes(registry)
         
-        @app.route('/test')
+        @app.route('/test/<connection_name>')
         @require_api_key
-        def test_endpoint():
+        def test_endpoint(connection_name):
             return {'status': 'ok'}
         
         with app.test_client() as client:
-            response = client.get('/test', headers={'X-API-Key': 'key-main'})
+            response = client.get('/test/main', headers={'X-API-Key': 'key-main'})
             assert response.status_code == 200
 
 

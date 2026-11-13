@@ -31,7 +31,7 @@ class TestApiDocs:
 
     def test_endpoints_are_rendered(self, app):
         """Карточки всех эндпоинтов созданы."""
-        assert len(app.docs_cards) == 9
+        assert len(app.docs_cards) == 8
 
     def test_every_endpoint_has_copy_buttons(self, app):
         """У каждого эндпоинта есть кнопки «Скопировать ссылку» и «Команда curl»."""
@@ -53,6 +53,8 @@ class TestApiDocs:
 
     def test_named_connection_url_format(self, app):
         """Для именованного подключения путь имеет вид /api/v1/c/<имя>/..."""
+        from urllib.parse import quote
+
         from src.config import config
 
         name = "ПодключениеДляТеста"
@@ -71,7 +73,7 @@ class TestApiDocs:
             urls = [card["url"] for card in app.docs_cards]
             
             # Префикс подключения — после /api/v1, а не перед ним
-            assert any(f"/api/v1/c/{name}/tables" in url for url in urls)
+            assert any(f"/api/v1/c/{quote(name)}/tables" in url for url in urls)
             assert not any(url.count("/c/") > 1 for url in urls)
         finally:
             if created:
@@ -82,7 +84,7 @@ class TestApiDocs:
         """curl-команда защищённых эндпоинтов содержит заголовок с ключом."""
         from src.config import config
 
-        connection = config.get_connection(config.default_connection) or {}
+        connection = config.get_connection(config.get_connection_names()[0]) or {}
         key = (connection.get("api_keys") or [""])[0]
         
         for card in app.docs_cards:
@@ -106,6 +108,8 @@ class TestConnectionSwitcher:
 
     def test_switching_changes_links(self, app):
         """При смене подключения ссылки меняются."""
+        from urllib.parse import quote
+
         from src.config import config
 
         name = "ТестовоеПодключение"
@@ -126,22 +130,25 @@ class TestConnectionSwitcher:
             after = [card["url"] for card in app.docs_cards]
             
             assert before != after
-            assert any(f"/c/{name}/tables" in link for link in after)
+            assert any(f"/c/{quote(name)}/tables" in link for link in after)
         finally:
             if created:
                 config.remove_connection(name)
             app._refresh_api_docs()
 
-    def test_switching_to_default_uses_short_paths(self, app):
-        """Для подключения по умолчанию показывается короткая форма пути."""
+    def test_all_urls_use_named_form(self, app):
+        """Все ссылки содержат имя подключения (/c/<имя>/...)."""
         from src.config import config
 
-        app.docs_connection_var.set(config.default_connection)
-        app._on_docs_connection_change(config.default_connection)
+        name = config.get_connection_names()[0]
+        app.docs_connection_var.set(name)
+        app._on_docs_connection_change(name)
         
         urls = [card["url"] for card in app.docs_cards]
         
-        assert any(url.endswith("/api/v1/tables") for url in urls)
+        assert urls
+        for url in urls:
+            assert "/api/v1/c/" in url
 
     def test_switcher_updates_after_adding_connection(self, app):
         """После добавления подключения оно появляется в переключателе."""
