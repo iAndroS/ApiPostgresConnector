@@ -127,14 +127,14 @@ class MainWindow(ctk.CTk):
     def _create_connections_tab(self):
         """Create connections tab: список подключений, редактор и API-ключи."""
         container = ctk.CTkScrollableFrame(self.tab_connections)
-        container.pack(fill="both", expand=True, padx=10, pady=10)
+        container.pack(fill="both", expand=True, padx=6, pady=6)
 
         # --- Таблица подключений ---
         columns = ("name", "host", "port", "db", "user", "keys")
         self.tree_connections = ttk.Treeview(
-            container, columns=columns, show="headings", height=6, selectmode="browse"
+            container, columns=columns, show="headings", height=4, selectmode="browse"
         )
-        
+
         headings = {
             "name": "Имя",
             "host": "Хост",
@@ -143,19 +143,19 @@ class MainWindow(ctk.CTk):
             "user": "Пользователь",
             "keys": "Ключей"
         }
-        widths = {"name": 130, "host": 120, "port": 55, "db": 100, "user": 100, "keys": 55}
-        
+        widths = {"name": 120, "host": 110, "port": 45, "db": 90, "user": 90, "keys": 45}
+
         for column in columns:
             self.tree_connections.heading(column, text=headings[column])
             self.tree_connections.column(column, width=widths[column], anchor="w")
-        
+
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure("Dark.Treeview",
                         background="#2b2b2b",
                         fieldbackground="#2b2b2b",
                         foreground="#ffffff",
-                        rowheight=22,
+                        rowheight=20,
                         borderwidth=0)
         style.configure("Dark.Treeview.Heading",
                         background="#3a3a3a",
@@ -165,135 +165,136 @@ class MainWindow(ctk.CTk):
                   background=[("selected", "#4a9eff")],
                   foreground=[("selected", "#ffffff")])
         self.tree_connections.configure(style="Dark.Treeview")
-        
-        self.tree_connections.pack(fill="x", padx=4, pady=(4, 0))
+
+        self.tree_connections.pack(fill="x", padx=4, pady=(4, 2))
         self.tree_connections.bind("<<TreeviewSelect>>", self._on_connection_select)
-        
+
         # --- Кнопки управления подключениями ---
         buttons_frame = ctk.CTkFrame(container, fg_color="transparent")
-        buttons_frame.pack(fill="x", padx=4, pady=6)
-        
-        ctk.CTkButton(buttons_frame, text="Добавить", width=85,
-                      command=self._add_connection).pack(side="left", padx=2)
-        ctk.CTkButton(buttons_frame, text="Переименовать", width=105,
+        buttons_frame.pack(fill="x", padx=4, pady=4)
+
+        ctk.CTkButton(buttons_frame, text="Добавить", width=70,
+                      command=self._add_connection).pack(side="left", padx=1)
+        ctk.CTkButton(buttons_frame, text="Переименовать", width=85,
                       command=self._rename_connection).pack(side="left", padx=2)
-        ctk.CTkButton(buttons_frame, text="Дублировать", width=100,
+        ctk.CTkButton(buttons_frame, text="Дублировать", width=80,
                       command=self._duplicate_connection).pack(side="left", padx=2)
-        ctk.CTkButton(buttons_frame, text="Удалить", width=75,
+        ctk.CTkButton(buttons_frame, text="Удалить", width=65,
                       command=self._remove_connection).pack(side="left", padx=2)
-        ctk.CTkButton(buttons_frame, text="По умолчанию", width=110,
+        ctk.CTkButton(buttons_frame, text="По умолчанию", width=90,
                       command=self._set_default_connection).pack(side="left", padx=2)
-        
-        # --- API-ключ выбранного подключения (сразу под таблицей) ---
+
+        # --- API-ключ выбранного подключения ---
         self.lbl_keys_header = ctk.CTkLabel(container, text="API-ключ подключения", anchor="w",
-                                            font=ctk.CTkFont(size=13, weight="bold"))
-        self.lbl_keys_header.pack(fill="x", padx=4, pady=(8, 0))
-        
+                                            font=ctk.CTkFont(size=12, weight="bold"))
+        self.lbl_keys_header.pack(fill="x", padx=4, pady=(6, 0))
+
         ctk.CTkLabel(
             container,
             text="Ключ действует только для выбранного подключения",
             text_color="gray",
-            font=ctk.CTkFont(size=10)
+            font=ctk.CTkFont(size=9)
         ).pack(fill="x", padx=4)
-        
+
         key_row = ctk.CTkFrame(container, fg_color="transparent")
         key_row.pack(fill="x", padx=4, pady=(2, 4))
-        
-        self.entry_api_key = ctk.CTkEntry(key_row, width=300, placeholder_text="ключ подключения")
+
+        self.entry_api_key = ctk.CTkEntry(key_row, width=260, placeholder_text="ключ подключения")
         self.entry_api_key.pack(side="left", padx=(0, 4))
-        
-        self.btn_copy_key = ctk.CTkButton(key_row, text="Копировать", width=95, command=self._copy_api_key)
+
+        self.btn_copy_key = ctk.CTkButton(key_row, text="Копировать", width=80,
+                                          command=self._copy_api_key)
         self.btn_copy_key.pack(side="left", padx=2)
-        
-        self.btn_generate_key = ctk.CTkButton(key_row, text="Сгенерировать", width=110,
+
+        self.btn_generate_key = ctk.CTkButton(key_row, text="Сгенерировать", width=100,
                                               command=self._generate_api_key)
         self.btn_generate_key.pack(side="left", padx=2)
-        
-        self.btn_save_key = ctk.CTkButton(key_row, text="Сохранить", width=95, command=self._save_api_key)
+
+        self.btn_save_key = ctk.CTkButton(key_row, text="Сохранить", width=95,
+                                          command=self._save_api_key)
         self.btn_save_key.pack(side="left", padx=2)
-        
+
         # Все ключи подключения
-        ctk.CTkLabel(container, text="Все ключи этого подключения (первый — основной):", anchor="w",
-                     text_color="gray").pack(fill="x", padx=4)
-        
+        ctk.CTkLabel(container, text="Все ключи подключения (первый — основной):", anchor="w",
+                     text_color="gray").pack(fill="x", padx=4, pady=(4, 0))
+
         list_row = ctk.CTkFrame(container, fg_color="transparent")
-        list_row.pack(fill="x", padx=4, pady=(2, 4))
-        
+        list_row.pack(fill="x", padx=4, pady=(0, 4))
+
         self.keys_listbox = tk.Listbox(list_row, height=3, bg="#2b2b2b", fg="#ffffff",
                                        selectbackground="#4a9eff", highlightthickness=0,
                                        relief="flat", activestyle="none")
         self.keys_listbox.pack(side="left", fill="x", expand=True, padx=(0, 4))
         self.keys_listbox.bind("<Double-Button-1>", lambda e: self._copy_selected_api_key())
-        
+
         list_buttons = ctk.CTkFrame(list_row, fg_color="transparent")
         list_buttons.pack(side="left")
-        
-        ctk.CTkButton(list_buttons, text="+ Ключ", width=80,
-                      command=self._add_api_key).pack(side="left", padx=2)
-        ctk.CTkButton(list_buttons, text="", width=42,
+
+        ctk.CTkButton(list_buttons, text="+ Ключ", width=70,
+                      command=self._add_api_key).pack(side="left", padx=1)
+        ctk.CTkButton(list_buttons, text="Копировать", width=80,
                       command=self._copy_selected_api_key).pack(side="left", padx=2)
-        ctk.CTkButton(list_buttons, text="", width=42,
+        ctk.CTkButton(list_buttons, text="Удалить", width=80,
                       command=self._remove_api_key).pack(side="left", padx=2)
-        
+
         # --- Параметры подключения ---
         ctk.CTkLabel(container, text="Параметры подключения", anchor="w",
-                     font=ctk.CTkFont(size=13, weight="bold")).pack(fill="x", padx=4, pady=(8, 2))
-        
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(fill="x", padx=4, pady=(6, 2))
+
         editor = ctk.CTkFrame(container, fg_color="transparent")
         editor.pack(fill="x", padx=4)
         editor.grid_columnconfigure(1, weight=1)
-        
+
         # DSN
-        ctk.CTkLabel(editor, text="DSN:").grid(row=0, column=0, padx=4, pady=3, sticky="w")
+        ctk.CTkLabel(editor, text="DSN:").grid(row=0, column=0, padx=4, pady=2, sticky="w")
         self.entry_dsn = ctk.CTkEntry(editor, width=240)
-        self.entry_dsn.grid(row=0, column=1, padx=4, pady=3, sticky="ew")
+        self.entry_dsn.grid(row=0, column=1, padx=4, pady=2, sticky="ew")
         ctk.CTkButton(editor, text="Из DSN", width=70,
-                      command=self._parse_dsn).grid(row=0, column=2, padx=4, pady=3)
-        
+                      command=self._parse_dsn).grid(row=0, column=2, padx=4, pady=2)
+
         # Host
-        ctk.CTkLabel(editor, text="Хост:").grid(row=1, column=0, padx=4, pady=3, sticky="w")
+        ctk.CTkLabel(editor, text="Хост:").grid(row=1, column=0, padx=4, pady=2, sticky="w")
         self.entry_host = ctk.CTkEntry(editor, width=240)
-        self.entry_host.grid(row=1, column=1, padx=4, pady=3, sticky="ew")
-        
+        self.entry_host.grid(row=1, column=1, padx=4, pady=2, sticky="ew")
+
         # Port
-        ctk.CTkLabel(editor, text="Порт:").grid(row=2, column=0, padx=4, pady=3, sticky="w")
+        ctk.CTkLabel(editor, text="Порт:").grid(row=2, column=0, padx=4, pady=2, sticky="w")
         self.entry_port = ctk.CTkEntry(editor, width=240)
-        self.entry_port.grid(row=2, column=1, padx=4, pady=3, sticky="ew")
-        
+        self.entry_port.grid(row=2, column=1, padx=4, pady=2, sticky="ew")
+
         # Database name
-        ctk.CTkLabel(editor, text="База данных:").grid(row=3, column=0, padx=4, pady=3, sticky="w")
+        ctk.CTkLabel(editor, text="База данных:").grid(row=3, column=0, padx=4, pady=2, sticky="w")
         self.entry_dbname = ctk.CTkEntry(editor, width=240)
-        self.entry_dbname.grid(row=3, column=1, padx=4, pady=3, sticky="ew")
-        
+        self.entry_dbname.grid(row=3, column=1, padx=4, pady=2, sticky="ew")
+
         # User
-        ctk.CTkLabel(editor, text="Пользователь:").grid(row=4, column=0, padx=4, pady=3, sticky="w")
+        ctk.CTkLabel(editor, text="Пользователь:").grid(row=4, column=0, padx=4, pady=2, sticky="w")
         self.entry_user = ctk.CTkEntry(editor, width=240)
-        self.entry_user.grid(row=4, column=1, padx=4, pady=3, sticky="ew")
-        
+        self.entry_user.grid(row=4, column=1, padx=4, pady=2, sticky="ew")
+
         # Password
-        ctk.CTkLabel(editor, text="Пароль:").grid(row=5, column=0, padx=4, pady=3, sticky="w")
+        ctk.CTkLabel(editor, text="Пароль:").grid(row=5, column=0, padx=4, pady=2, sticky="w")
         self.entry_password = ctk.CTkEntry(editor, width=240, show="*")
-        self.entry_password.grid(row=5, column=1, padx=4, pady=3, sticky="ew")
-        
+        self.entry_password.grid(row=5, column=1, padx=4, pady=2, sticky="ew")
+
         self.btn_test = ctk.CTkButton(
             editor, text="Проверить подключение", width=160, command=self._test_connection
         )
-        self.btn_test.grid(row=5, column=2, padx=4, pady=3)
-        
+        self.btn_test.grid(row=6, column=2, padx=4, pady=2)
+
         # Connection status
         self.lbl_connection_status = ctk.CTkLabel(editor, text="", anchor="w")
-        self.lbl_connection_status.grid(row=6, column=0, columnspan=3, padx=4, pady=4, sticky="w")
-        
+        self.lbl_connection_status.grid(row=7, column=0, columnspan=3, padx=4, pady=2, sticky="w")
+
         # Состояние подключения к БД (обновляется каждые 2 секунды)
         self.lbl_db_state = ctk.CTkLabel(editor, text="", anchor="w")
-        self.lbl_db_state.grid(row=7, column=0, columnspan=3, padx=4, pady=(0, 4), sticky="w")
-        
+        self.lbl_db_state.grid(row=8, column=0, columnspan=3, padx=4, pady=(0, 4), sticky="w")
+
         # Right-click paste menu for all entry fields
         self._setup_paste_functionality()
-        
+
         # Заполняем таблицу и редактор после создания всех виджетов
         self._refresh_connections_tree()
-
     def _refresh_connections_tree(self):
         """Перерисовывает таблицу подключений."""
         if not hasattr(self, "tree_connections"):
