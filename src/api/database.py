@@ -156,10 +156,10 @@ def sanitize_db_message(message: str) -> str:
     if not message:
         return message
     
-    sanitized = re.sub(r'at "([^"]+)"', 'at "<host>"', message)
+    sanitized = re.sub(r'at "([^"]+)"(?:\s*\(([^)]+)\))?', r'at "<host>"', message)
     sanitized = re.sub(r'user "([^"]+)"', 'user "<user>"', sanitized)
     sanitized = re.sub(r'host=([^\s,]+)', 'host=<host>', sanitized)
-    return sanitized
+    return sanitized.strip()
 
 
 def parse_dsn(dsn: str) -> dict:

@@ -112,6 +112,16 @@ class TestSanitizeDbMessage:
         assert "10.0.0.1" not in sanitized
         assert "<host>" in sanitized
     
+    def test_host_with_port_suffix_is_masked(self):
+        """Хост в скобках (host (ip)) тоже маскируется."""
+        message = 'connection to server at "localhost" (127.0.0.1), port 5432 failed'
+        
+        sanitized = sanitize_db_message(message)
+        
+        assert "127.0.0.1" not in sanitized
+        assert "localhost" not in sanitized
+        assert "<host>" in sanitized
+    
     def test_user_is_masked(self):
         message = 'password authentication failed for user "nocodb"'
         
