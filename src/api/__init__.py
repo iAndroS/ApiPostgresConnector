@@ -1,4 +1,4 @@
-"""API package for ZennoRestPostgres."""
+"""API package for ApiPostgresConnector."""
 from .database import Database
 from .routes import api_bp, init_routes
 

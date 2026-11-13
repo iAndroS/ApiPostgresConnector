@@ -66,22 +66,40 @@ pip install -r requirements-dev.txt
 
 ### Для клиента
 
-При распространении приложения необходимо передавать **папку с EXE-файлом целиком**, а не только исполняемый файл.
+**Достаточно передать один файл** — `ApiPostgresConnector.exe` (39,5 МБ). Это самодостаточная
+onefile-сборка: Python, все библиотеки и ресурсы внутри. Ничего доустанавливать не нужно.
 
+```
+ApiPostgresConnector.exe      # ← всё, что нужно клиенту
+```
+
+При первом запуске рядом с EXE создаются:
 ```
 ApiPostgresConnector/
-├── ApiPostgresConnector_v2.exe     # Главный исполняемый файл
+├── ApiPostgresConnector.exe  # Приложение
 ├── config/
-│   └── settings.json                # Файл настроек (создаётся при первом запуске)
-└── app.log                          # Лог приложения (создаётся рядом с EXE)
+│   └── settings.json         # Настройки (создаётся при первом запуске)
+└── app.log                   # Лог (создаётся при первом запуске)
 ```
 
-> **Важно:** при первом запуске приложение создаёт `config/settings.json` рядом с EXE из шаблона
-> `config/settings.default.json`. Если папка не доступна для записи, настройки сохраняются в
-> `%APPDATA%\ApiPostgresConnector\config\settings.json`.
+> **Важно:** `config/settings.json` содержит пароли БД и API-ключи — не передавайте его клиенту,
+> пусть приложение создаст файл самостоятельно. Если папка рядом с EXE недоступна для записи,
+> настройки сохраняются в `%APPDATA%\ApiPostgresConnector\config\settings.json`.
 
-> **Безопасность:** `config/settings.json` содержит пароли БД и API-ключи и **не коммитится** в git.
-> В репозитории лежит только обезличенный шаблон `config/settings.default.json`.
+> **Безопасность:** `config/settings.json` не коммитится в git. В репозитории лежит только
+> обезличенный шаблон `config/settings.default.json`.
+
+### Установщик (опционально)
+
+Если нужен классический установщик с ярлыками в меню «Пуск» и деинсталлятором — соберите его
+через [Inno Setup 6](https://jrsoftware.org/isinfo.php):
+
+```bash
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ApiPostgresConnector.iss
+```
+
+Готовый файл `dist/ApiPostgresConnector_Setup.exe` устанавливает приложение в
+`%ProgramFiles%\ApiPostgresConnector`.
 
 ## Запуск
 
@@ -372,7 +390,16 @@ pip install -r requirements-dev.txt
 pyinstaller pyinstaller.spec
 ```
 
-Результат — в `dist/ApiPostgresConnector_v2/`.
+Результат — один файл `dist/ApiPostgresConnector.exe` (onefile: библиотеки внутри).
+
+Номер релиза задаётся в одном месте — `src/version.py` (`APP_VERSION = "2.1.0"`). Он попадает:
+- в свойства файла EXE (Windows → «Сведения» / «Свойства»);
+- в заголовок окна приложения;
+- в ответ `GET /api/v1/info` → `"version"`;
+- в подвал встроенной документации;
+- в ресурс версии, который spec генерирует из `src/version.py` (дублировать руками не нужно).
+
+При смене версии достаточно поправить `src/version.py` и пересобрать.
 
 ## Структура проекта
 
@@ -381,6 +408,7 @@ ApiPostgresConnector/
 ├── src/
 │   ├── app.py              # Точка входа, класс APIServer (werkzeug make_server)
 │   ├── config.py           # Модуль конфигурации (подключения, шифрование паролей)
+│   ├── version.py          # Версия приложения (единый источник истины)
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── connections.py  # Реестр именованных подключений
@@ -394,6 +422,8 @@ ApiPostgresConnector/
 ├── config/
 │   ├── settings.default.json  # Обезличенный шаблон (в репозитории)
 │   └── settings.json          # Рабочие настройки (не в репозитории)
+├── installer/
+│   └── ApiPostgresConnector.iss  # Скрипт установщика Inno Setup
 ├── tests/
 │   ├── test_config.py
 │   ├── test_config_paths.py

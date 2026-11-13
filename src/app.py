@@ -22,6 +22,7 @@ from src.config import config, get_base_dir
 from src.api.connections import ConnectionRegistry
 from src.api.routes import api_bp, init_routes
 from src.gui.main_window import MainWindow
+from src.version import APP_NAME, APP_VERSION, VERSION_STRING
 
 
 # Configure logging
@@ -205,11 +206,14 @@ tables = requests.get(f"{BASE}/c/crm/tables", headers=HEADERS).json()</code></pr
     -Headers @{ "X-API-Key" = "your-api-key" }</code></pre>
 
     <footer>
-        <p><small>ApiPostgresConnector v2.0.0</small></p>
+        <p><small>{{VERSION}}</small></p>
     </footer>
 </body>
 </html>
 """
+
+# Подстановка версии в документацию (в HTML есть фигурные скобки — f-string не подходит)
+API_DOCS_HTML = API_DOCS_HTML.replace("{{VERSION}}", VERSION_STRING)
 
 
 class APIServer:

@@ -26,6 +26,7 @@ except ImportError:
 
 from ..config import config
 from ..api.routes import get_registry
+from ..version import VERSION_STRING
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class MainWindow(ctk.CTk):
 
         # Configure window
         gui_config = config.gui
-        self.title("ApiPostgresConnector")
+        self.title(VERSION_STRING)
         
         # Минимальный размер — чтобы вкладка «Подключения» помещалась
         width = max(int(gui_config.get('width', 700) or 700), 700)
@@ -89,7 +90,7 @@ class MainWindow(ctk.CTk):
         # Logo/Title
         self.title_label = ctk.CTkLabel(
             self.header_frame,
-            text="ApiPostgresConnector",
+            text=VERSION_STRING,
             font=ctk.CTkFont(size=20, weight="bold")
         )
         self.title_label.grid(row=0, column=0, padx=20, pady=10)

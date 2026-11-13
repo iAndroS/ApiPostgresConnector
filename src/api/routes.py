@@ -7,6 +7,7 @@ from flask import Blueprint, g, jsonify, request
 
 from .connections import ConnectionRegistry
 from .database import sanitize_db_message
+from ..version import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +303,7 @@ def api_info(connection_name=None):
     
     payload = {
         "name": "ApiPostgresConnector API",
-        "version": "2.0.0",
+        "version": APP_VERSION,
         "description": "REST API for PostgreSQL database access",
         "auth_required": _registry.total_key_count() > 0 if _registry else False,
         "api_key_count": _registry.total_key_count() if _registry else 0,

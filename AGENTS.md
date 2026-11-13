@@ -20,7 +20,7 @@ ApiPostgresConnector — десктопное приложение (CustomTkinte
 ## Команды
 
 - Запуск: `python src/app.py`
-- Сборка EXE: `pyinstaller pyinstaller.spec` (результат в `dist/ApiPostgresConnector_v2/`)
+- Сборка EXE: `pyinstaller pyinstaller.spec` (результат — один файл `dist/ApiPostgresConnector.exe`, onefile)
 - Установка зависимостей: `pip install -r requirements.txt` (инструменты — `requirements-dev.txt`)
 - Запуск тестов: `pytest tests/ -v`
 
@@ -55,6 +55,9 @@ GUI (MainWindow) → APIServer (werkzeug make_server в потоке) → Flask 
   ключ по умолчанию выводится из `platform.node()`, для переноса задавай `ENCRYPTION_KEY`.
 - **Путь конфига** — `get_base_dir()`: frozen → папка рядом с EXE, dev → корень проекта;
   при отсутствии прав на запись — fallback в `%APPDATA%\ApiPostgresConnector\config\settings.json`.
+- **Версия** — единственный источник `src/version.py` (`APP_VERSION`): попадает в свойства EXE
+  (генерируются spec'ом), в заголовок GUI, в `/api/v1/info` и в HTML-документацию. Не дублировать вручную.
+- **Сборка onefile** — один `dist/ApiPostgresConnector.exe`; клиенту передаётся только он.
 - **`config/settings.json` не коммитится** (в репозитории только `config/settings.default.json`).
 - **Валидация идентификаторов** — все ID проходят проверку на корректность перед использованием в запросах.
 - **Batch-insert** — массовая вставка через `/api/v1/tables/<table>/batch-insert` (макс. 1000 записей);
