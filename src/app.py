@@ -36,10 +36,21 @@ log_file = log_dir / "app.log"
 enable_logging = config.app.get("enable_logging", True)
 
 # Configure logging with optional file handler
-handlers = [logging.StreamHandler(sys.stdout)]
+handlers = []
+
+# Консоль: принудительно UTF-8, иначе кириллица в терминале Windows
+# превращается в мусор (консоль по умолчанию CP866/CP1251)
+if sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    handlers.append(logging.StreamHandler(sys.stdout))
+
 if enable_logging:
     try:
-        handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
+        # utf-8-sig — чтобы Блокнот и старые редакторы не ломали кириллицу
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8-sig"))
     except OSError as e:
         print(f"File logging disabled: {e}")
 

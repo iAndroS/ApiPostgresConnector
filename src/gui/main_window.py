@@ -1576,30 +1576,53 @@ class MainWindow(ctk.CTk):
 
     def _update_api_status(self):
         """Periodically update API status."""
-        if self.api_server:
-            if self.api_server.is_running():
-                self.status_label.configure(text=self._api_status_text())
-                self.btn_toggle_api.configure(text="Остановить API")
-            else:
-                self.status_label.configure(text="API: Не запущен")
-                self.btn_toggle_api.configure(text="Запустить API")
-        
-        # Показываем последнюю ошибку БД, если подключение было недоступно
-        self._update_last_db_error()
-        
-        # Обновляем статус подключений (цветная точка в таблице)
-        self._update_connection_status()
+        try:
+            if self.api_server:
+                if self.api_server.is_running():
+                    self.status_label.configure(text=self._api_status_text())
+                    self.btn_toggle_api.configure(text="Остановить API")
+                else:
+                    self.status_label.configure(text="API: Не запущен")
+                    self.btn_toggle_api.configure(text="Запустить API")
+            
+            # Показываем последнюю ошибку БД, если подключение было недоступно
+            self._update_last_db_error()
+            
+            # Обновляем статус подключений (цветная точка в таблице)
+            self._update_connection_status()
+            
+            # Обновляем подсказку трея — иначе она показывает устаревший статус
+            self._update_tray_tooltip()
+        except Exception as e:
+            logger.debug(f"Status update error: {e}")
         
         # Schedule next update
         self.after(2000, self._update_api_status)
+    
+    def _update_tray_tooltip(self):
+        """Обновляет текст подсказки трея (статус, подключения, активность)."""
+        if _tray_icon is None:
+            return
+        
+        try:
+            _tray_icon.title = self._tray_tooltip_text()
+        except Exception as e:
+            logger.debug(f"Failed to update tray tooltip: {e}")
 
     def _update_last_db_error(self):
         """Показывает в статусе состояние подключения к БД и причину ошибки."""
         registry = get_registry()
         if not registry:
             return
+        profile = registry.get(self._current_connection) if self._current_connection else None
         
-        profile = registry.get(self._current_connection) if self._current_connection else registry.get_default()
+        if not profile:
+            # Подключения по умолчанию нет — берём первое включённое
+            for name in registry.names():
+                profile = registry.get(name)
+                if profile and profile.enabled:
+                    break
+        
         if not profile:
             return
         
@@ -1669,7 +1692,10 @@ class MainWindow(ctk.CTk):
         def on_hover(icon, item):
             """Update tooltip on hover."""
             if _tray_icon:
-                _tray_icon.title = get_tooltip_text()
+                try:
+                    _tray_icon.title = get_tooltip_text()
+                except Exception as e:
+                    logger.debug(f"Failed to update tray tooltip: {e}")
         
         # Create menu
         menu = pystray.Menu(
